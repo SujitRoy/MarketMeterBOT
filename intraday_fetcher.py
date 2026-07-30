@@ -30,10 +30,12 @@ TV_HEADERS = {
 
 
 def build_query(symbols: list[str]) -> dict:
-    """Build TradingView scanner query for given symbols."""
+    """Build TradingView scanner query for given symbols using tickers."""
+    # Use tickers format: NSE:SYMBOL
+    tickers = [f"NSE:{s}" for s in symbols]
     return {
         "markets": ["india"],
-        "symbols": {},
+        "symbols": {"tickers": tickers},
         "options": {"lang": "en"},
         "columns": [
             "name",
@@ -57,9 +59,6 @@ def build_query(symbols: list[str]) -> dict:
             "SMA200",
             "relative_volume_10d_calc",
             "market_cap_basic",
-        ],
-        "filter": [
-            {"left": "name", "operation": "in_range", "right": symbols}
         ],
         "sort": {"sortBy": "market_cap_basic", "sortOrder": "desc"},
         "range": [0, len(symbols)],

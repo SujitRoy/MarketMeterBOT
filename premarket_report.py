@@ -57,19 +57,30 @@ def build_premarket_message(live_data: list[dict]) -> str:
 
 async def send_premarket_report(app):
     """
-    Main entry: fetch live data and broadcast to owner + subscribers.
+    Main entry: fetch live data for top 25 symbols from morning report and send ONLY to owner.
     Called by scheduler at 09:00 IST (Mon-Fri).
     """
-    logger.info("Generating pre-market live prices report...")
+    logger.info("Generating pre-market live prices report for top 25...")
 
-    # Combine INTRADAY_SYMBOLS from config + tracked symbols from DB
-    symbols = list(INTRADAY_SYMBOLS)
-    tracked = get_tracked_symbols()
-    for t in tracked:
-        if t['symbol'] not in symbols:
-            symbols.append(t['symbol'])
+    # Get the top 25 symbols from the latest morning report (analysis)
+    from database import get_latest_analysis, get_resolved_analysis_date
+    from config import REPORT_TABLE_ROWS
+    
+    analysis_date = get_resolved_analysis_date()
+    if not analysis_date:
+        logger.warning("No analysis date available for pre-market report")
+        return {"sent": 0, "failed": 0, "total": 0}
 
-    logger.info("Fetching live prices for %d symbols", len(symbols))
+    analysis = get_latest_analysis(analysis_date)
+    if not analysis:
+        logger.warning("No analysis data available for pre-market report")
+        return {"sent": 0, "failed": 0, "total": 0}
+
+    # Get top 25 symbols by composite_score (same as morning report)
+    top25 = sorted(analysis, key=lambda x: x.get("composite_score", 0), reverse=True)[:REPORT_TABLE_ROWS]
+    symbols = [s["symbol"] for s in top25]
+
+    logger.info("Fetching live prices for top %d symbols: %s", len(symbols), symbols)
 
     # Fetch live data (runs in executor to avoid blocking)
     loop = asyncio.get_event_loop()
@@ -82,7 +93,7 @@ async def send_premarket_report(app):
     # Build message
     message = build_premarket_message(live_data)
 
-    # Send to owner first
+    # Send ONLY to owner
     try:
         if _needs_rich(message):
             await _send_rich_chunks(app.bot, OWNER_CHAT_ID, message)
@@ -93,38 +104,10 @@ async def send_premarket_report(app):
                 parse_mode="Markdown",
             )
         logger.info("Sent pre-market report to owner")
+        return {"sent": 1, "failed": 0, "total": 1}
     except Exception as e:
         logger.error("Failed to send pre-market to owner: %s", e)
-
-    # Broadcast to subscribers
-    subscribers = get_active_subscribers()
-    total = len(subscribers)
-    sent = 0
-    failed = 0
-
-    for sub in subscribers:
-        chat_id = sub['chat_id']
-        try:
-            if _needs_rich(message):
-                await _send_rich_chunks(app.bot, chat_id, message, disable_notification=True)
-            else:
-                await app.bot.send_message(
-                    chat_id=chat_id,
-                    text=message,
-                    parse_mode="Markdown",
-                    disable_notification=True,
-                )
-            sent += 1
-        except Exception as e:
-            logger.warning("Failed to send pre-market to %d: %s", chat_id, e)
-            failed += 1
-
-        # Rate limit
-        if sent % 25 == 0:
-            await asyncio.sleep(1)
-
-    logger.info("Pre-market broadcast complete: %d sent, %d failed, %d total", sent, failed, total)
-    return {"sent": sent, "failed": failed, "total": total}
+        return {"sent": 0, "failed": 1, "total": 1}
 
 
 if __name__ == "__main__":
