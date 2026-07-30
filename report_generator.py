@@ -638,31 +638,94 @@ guarantee future moves._"""
 
 
 def generate_welcome_message(first_name: str = "there") -> str:
-    """Welcome message for new users. Rich Markdown."""
+    """Welcome message for new users. QuicklixBot-style Rich Markdown."""
     return f"""👋 **Hello {first_name}!**
 
-Welcome to **MarketMeter** — your daily NSE stock analysis assistant.
+**Welcome to MarketMeter** — your daily NSE stock analysis assistant.
 
-**What this bot does:**
+---
+
+**📊 What this bot does:**
 📥 Downloads daily BhavCopy data from NSE
-📊 Runs technical analysis on all stocks
+📊 Runs technical analysis on all 3,000+ stocks
 📈 Sends morning reports with BUY/WATCH/AVOID signals
 
-**Commands:**
-• /subscribe — Get daily morning reports
-• /unsubscribe — Stop receiving reports
-• /report — Get today's report on demand
-• /status — Check sync & database status
-• /indicators — What RSI, ADX, MACD etc. mean
-• /search <symbol|name> — Live price + full details
-• /help — Show this message
+---
 
-**Schedule:**
-⏰ Sync: 6:30 PM IST (after market close)
-🌅 Report: 8:30 AM IST (before market open)
-🌄 Pre-market: 9:00 AM IST (live prices)
+**🎯 Your Daily Edge**
 
-⚠️ _This is not financial advice. All analysis is based on technical indicators only._"""
+| Feature | Status |
+|:--------|:------:|
+| **EOD Data** | ✅ 6:30 PM IST |
+| **Live Prices** | ✅ 9:00 AM IST |
+| **Full History** | ✅ 2022-01-03 → latest trading day |
+| **Indicators** | ✅ 15+ technicals |
+| **Coverage** | ✅ 3,000+ NSE stocks |
+
+---
+
+**⚡ Quick Commands**
+
+| Command | Description |
+|:--------|:------------|
+| `/start` | This welcome message |
+| `/subscribe` | Get daily morning reports |
+| `/unsubscribe` | Stop receiving reports |
+| `/report` | Get today's analysis on demand |
+| `/status` | Check sync & database status |
+| `/indicators` | RSI, ADX, MACD, SMA/EMA explained |
+| `/search <symbol|name>` | Live price + full details |
+| `/help` | Show detailed help |
+
+---
+
+**🔍 How it works**
+
+```
+1️⃣ EOD Sync (6:30 PM) → Download BhavCopy → Store in SQLite
+2️⃣ Analysis → RSI, ADX, MACD, EMA/SMA, Volume, OBV
+3️⃣ Score → Composite 0-18 → STRONG BUY → AVOID
+4️⃣ Report (8:30 AM) → Top 25 + Full scan table
+5️⃣ Pre-market (9:00 AM) → Live prices for tracked symbols
+```
+
+---
+
+**📈 Report Categories**
+
+<details open><summary>**📊 Signal Legend**</summary>
+
+| Emoji | Signal | Score | Action |
+|:-----:|:-------|:-----:|:-------|
+| 🟢 | **STRONG BUY** | 12-18 | High conviction entry |
+| 🟢 | **BUY** | 10-11 | Strong momentum |
+| 🟡 | **ACCUMULATE** | 8-9 | Add on dips |
+| 🔵 | **WATCH** | 6-7 | Monitor for setup |
+| 🟠 | **CAUTION** | <6 | Overbought/weak |
+| 🔴 | **AVOID** | <6 | Poor setup |
+
+</details>
+
+---
+
+**🔔 Pre-Market Live Prices**
+• **9:00 AM IST** — Live quotes for tracked symbols
+• **/search RELIANCE** — Instant live quote + 15 indicators
+
+---
+
+**💡 Pro Tips**
+<details><summary>**📖 Learn More**</summary>
+
+• `/indicators` — Full glossary & scoring rules
+• `/search <name>` — Fuzzy search (e.g. `/search airtel` → BHARTIARTL)
+• `/status` — Database health, sync history, subscriber count
+
+</details>
+
+---
+
+⚠️ _Not financial advice. All analysis based on technical indicators only._"""
 
 
 def generate_help_message() -> str:
