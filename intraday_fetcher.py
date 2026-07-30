@@ -39,30 +39,40 @@ def build_query(symbols: list[str]) -> dict:
         "options": {"lang": "en"},
         "columns": [
             "name",
-            "close",
-            "volume",
-            "change",
-            "change_abs",
-            "high",
-            "low",
-            "open",
-            "VWAP",
-            "RSI",
-            "MACD.macd",
-            "MACD.signal",
-            "EMA9",
-            "EMA21",
-            "EMA50",
-            "EMA200",
-            "SMA20",
-            "SMA50",
-            "SMA200",
+            # Price + intraday (existing)
+            "close", "open", "high", "low", "volume",
+            "change", "change_abs", "change_from_open", "change_from_open_abs",
+            "gap", "gap_percent", "VWAP",
+            # Technical indicators (existing)
+            "RSI", "MACD.macd", "MACD.signal",
+            # Moving averages (existing)
+            "EMA9", "EMA21", "EMA50", "EMA200",
+            "SMA20", "SMA50", "SMA200",
+            # Volume context (existing)
             "relative_volume_10d_calc",
-            "market_cap_basic",
+            # Fundamentals (existing)
+            "market_cap_basic", "price_earnings_ttm",
+            "earnings_per_share_diluted_ttm", "dividends_yield_current",
+            # ---- additions for /search enrichment (consumers use .get, safe to add) ----
+            # TradingView's own recommendation rating
+            "Recommend.All", "Recommend.MA", "Recommend.Other",
+            # Sector / industry classification
+            "sector", "industry",
+            # Extra oscillators and volatility
+            "Stoch.K", "Stoch.D", "ADX", "ADX+DI", "ADX-DI", "ATR",
+            # Bollinger Bands
+            "BB.upper", "BB.lower", "BB.basis",
+            # 52-week / all-time reference levels
+            "high_52w", "low_52w",
+            "all_time_high", "all_time_low",
+            # Margins (Mold-Tek type context)
+            "gross_margin_ttm", "net_margin_ttm",
         ],
         "sort": {"sortBy": "market_cap_basic", "sortOrder": "desc"},
         "range": [0, len(symbols)],
-        "ignore_unknown_fields": False,
+        # ignore_unknown_fields=True keeps the response forward-compatible: TV
+        # can drop or rename a column without us crashing the whole snapshot.
+        "ignore_unknown_fields": True,
     }
 
 

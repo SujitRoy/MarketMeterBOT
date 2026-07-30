@@ -5,9 +5,16 @@ Runs within the bot's event loop — no external cron needed.
 """
 import asyncio
 import logging
-from datetime import datetime, time
+from datetime import datetime, time, timezone, timedelta
 
 from telegram.ext import Application
+
+# PTB's JobQueue defaults to UTC unless `time.tzinfo` is set or the bot's
+# Defaults.tzinfo is configured. The server's clock is IST, but the scheduler
+# is timezone-agnostic — without this offset, SYNC_TIME="18:30" would fire at
+# 18:30 UTC (midnight IST) and REPORT_TIME="08:30" at 14:00 IST, not 08:30.
+# See: PTB JobQueue.scheduler_configuration hardcodes timezone = UTC.
+IST = timezone(timedelta(hours=5, minutes=30))
 
 from config import (
     SYNC_TIME, REPORT_TIME, TIMEZONE, OWNER_CHAT_ID,
@@ -29,9 +36,13 @@ RETRY_JOB_NAME = "sync_retry"
 
 
 def _parse_time(time_str: str) -> time:
-    """Parse 'HH:MM' string to time object."""
+    """Parse 'HH:MM' string to a time object stamped with IST.
+
+    Returning a tz-aware time is what tells PTB's JobQueue to fire at that
+    wall-clock hour in IST rather than in UTC (the scheduler's default).
+    """
     hour, minute = map(int, time_str.split(':'))
-    return time(hour=hour, minute=minute)
+    return time(hour=hour, minute=minute, tzinfo=IST)
 
 
 async def _run_sync_cycle(app, *, is_retry: bool = False) -> dict:
