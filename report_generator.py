@@ -654,11 +654,13 @@ Welcome to **MarketMeter** — your daily NSE stock analysis assistant.
 /report — Get today's report on demand
 /status — Check sync & database status
 /indicators — What RSI, ADX, MACD etc. mean
+/search <symbol|name> — Live price + full details
 /help — Show this message
 
 **Schedule:**
 ⏰ Sync: 6:30 PM IST (after market close)
 🌅 Report: 8:30 AM IST (before market open)
+🌄 Pre-market: 9:00 AM IST (live prices)
 
 ⚠️ _This is not financial advice. All analysis is based on technical indicators only._"""
 
@@ -674,6 +676,7 @@ def generate_help_message() -> str:
 • /report — Get latest analysis report
 • /status — Database & sync status
 • /indicators — Indicator meanings & scoring
+• /search <symbol|name> — Live price & full details
 • /help — This message
 
 **How it works:**
@@ -685,6 +688,10 @@ def generate_help_message() -> str:
    🔵 WATCH
    🟠 CAUTION
    🔴 AVOID
+
+**Pre-market live prices:**
+• 9:00 AM — Live prices for tracked symbols
+• /search RELIANCE — instant live quote + indicators
 
 **Scoring factors:**
 • RSI (Relative Strength Index)
