@@ -174,8 +174,9 @@ def create_application() -> Application:
     for h in search_handlers:
         app.add_handler(h)
 
-    # Post-init: set menu button (≡) in chat typing area
+    # Post-init & post-start: set menu button (≡) in chat typing area
     app.post_init = _setup_menu_button
+    app.post_start = _setup_menu_button_post_start
 
     logger.info("Bot application created with %d handlers", 7 + len(search_handlers))
     return app
@@ -184,11 +185,23 @@ def create_application() -> Application:
 async def _setup_menu_button(app: Application):
     """Configure the menu button (≡) with commands list."""
     from telegram import MenuButtonCommands
+    logger.info("Setting up menu button (≡)...")
     try:
         await app.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
-        logger.info("Menu button (≡) configured")
+        logger.info("Menu button (≡) configured successfully")
     except Exception as e:
         logger.warning("Failed to set menu button: %s", e)
+    logger.info("Menu button setup complete")
+
+
+async def _setup_menu_button_post_start(app: Application):
+    """Fallback: configure menu button after start if post_init didn't run."""
+    from telegram import MenuButtonCommands
+    try:
+        await app.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+        logger.info("Menu button (≡) configured (post_start)")
+    except Exception as e:
+        logger.warning("Failed to set menu button (post_start): %s", e)
 
 
 # ── Message Sending ─────────────────────────────────────────────────
