@@ -64,7 +64,7 @@ def init_db():
             del_pct REAL,
             avg_price REAL,
             trade_date DATE NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT (datetime('now', 'localtime')),
             UNIQUE(symbol, trade_date)
         );
 
@@ -82,7 +82,7 @@ def init_db():
             status TEXT CHECK(status IN ('success','failed','holiday','skipped','not_available')),
             records_count INTEGER DEFAULT 0,
             error_message TEXT,
-            synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            synced_at TIMESTAMP DEFAULT (datetime('now', 'localtime'))
         );
 
         -- Daily pre-computed analysis cache
@@ -114,7 +114,7 @@ def init_db():
             composite_score INTEGER,
             recommendation TEXT CHECK(recommendation IN
                 ('STRONG_BUY','BUY','ACCUMULATE','WATCH','CAUTION','AVOID')),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT (datetime('now', 'localtime')),
             UNIQUE(symbol, analysis_date)
         );
 
@@ -127,7 +127,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS stats_cache (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            updated_at TIMESTAMP DEFAULT (datetime('now', 'localtime'))
         );
 
         -- Rendered report cache. Keyed by resolved analysis_date (never
@@ -139,7 +139,7 @@ def init_db():
             analysis_date DATE NOT NULL,
             version       INTEGER NOT NULL,
             payload       TEXT NOT NULL,
-            built_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            built_at      TIMESTAMP DEFAULT (datetime('now', 'localtime')),
             PRIMARY KEY (kind, analysis_date, version)
         ) WITHOUT ROWID;
 
@@ -149,7 +149,7 @@ def init_db():
             username TEXT,
             first_name TEXT,
             last_name TEXT,
-            subscribed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            subscribed_at TIMESTAMP DEFAULT (datetime('now', 'localtime')),
             active BOOLEAN DEFAULT 1,
             receive_reports BOOLEAN DEFAULT 1
         );

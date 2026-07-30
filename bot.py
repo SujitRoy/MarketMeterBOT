@@ -235,9 +235,10 @@ async def broadcast_to_subscribers(app: Application, message: str):
                 )
             sent += 1
         except Forbidden:
-            # User blocked the bot — deactivate them
-            logger.info("Subscriber %d blocked bot, deactivating", chat_id)
-            remove_subscriber(chat_id)
+            # User blocked the bot — DO NOT auto-deactivate.
+            # Only explicit /unsubscribe should stop reports.
+            # Log and skip this user for this broadcast.
+            logger.warning("Subscriber %d blocked bot, skipping broadcast (NOT deactivating)", chat_id)
             failed += 1
         except TelegramError as e:
             logger.warning("Failed to send to %d: %s", chat_id, e)
