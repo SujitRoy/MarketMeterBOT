@@ -638,7 +638,7 @@ guarantee future moves._"""
 
 
 def generate_welcome_message(first_name: str = "there") -> str:
-    """Welcome message for new users. Rich Markdown (**bold**, not V1 *bold*)."""
+    """Welcome message for new users. Rich Markdown."""
     return f"""👋 **Hello {first_name}!**
 
 Welcome to **MarketMeter** — your daily NSE stock analysis assistant.
@@ -649,13 +649,13 @@ Welcome to **MarketMeter** — your daily NSE stock analysis assistant.
 📈 Sends morning reports with BUY/WATCH/AVOID signals
 
 **Commands:**
-/subscribe — Get daily morning reports
-/unsubscribe — Stop receiving reports
-/report — Get today's report on demand
-/status — Check sync & database status
-/indicators — What RSI, ADX, MACD etc. mean
-/search <symbol|name> — Live price + full details
-/help — Show this message
+• /subscribe — Get daily morning reports
+• /unsubscribe — Stop receiving reports
+• /report — Get today's report on demand
+• /status — Check sync & database status
+• /indicators — What RSI, ADX, MACD etc. mean
+• /search <symbol|name> — Live price + full details
+• /help — Show this message
 
 **Schedule:**
 ⏰ Sync: 6:30 PM IST (after market close)
@@ -669,38 +669,58 @@ def generate_help_message() -> str:
     """Help message with all commands. Rich Markdown."""
     return """🆘 **MarketMeter Help**
 
-**Commands:**
-• /start — Welcome message
-• /subscribe — Subscribe to daily reports
-• /unsubscribe — Unsubscribe from reports
-• /report — Get latest analysis report
-• /status — Database & sync status
-• /indicators — Indicator meanings & scoring
-• /search <symbol|name> — Live price & full details
-• /help — This message
+**Commands**
 
-**How it works:**
+| Command | Description |
+|:--------|:------------|
+| /start | Welcome message |
+| /subscribe | Subscribe to daily reports |
+| /unsubscribe | Unsubscribe from reports |
+| /report | Get latest analysis report |
+| /status | Database & sync status |
+| /indicators | Indicator meanings & scoring |
+| /search <symbol|name> | Live price & full details |
+| /help | This message |
+
+**How it works**
+
 1️⃣ Bot downloads BhavCopy data daily at 6:30 PM IST
 2️⃣ Technical analysis runs on all stocks
 3️⃣ Morning report sent at 8:30 AM IST with:
-   🟢 STRONG BUY / BUY
-   🟡 ACCUMULATE
-   🔵 WATCH
-   🟠 CAUTION
-   🔴 AVOID
 
-**Pre-market live prices:**
+<details open><summary>**📊 Report Categories**</summary>
+
+| Emoji | Category |
+|:-----:|:---------|
+| 🟢 | STRONG BUY / BUY |
+| 🟡 | ACCUMULATE |
+| 🔵 | WATCH |
+| 🟠 | CAUTION |
+| 🔴 | AVOID |
+
+</details>
+
+**Pre-market live prices**
+
 • 9:00 AM — Live prices for tracked symbols
-• /search RELIANCE — instant live quote + indicators
+• `/search RELIANCE` — instant live quote + indicators
 
-**Scoring factors:**
-• RSI (Relative Strength Index)
-• ADX (Trend Strength)
-• MACD (Momentum)
-• Moving Averages (SMA/EMA 20/50/100/200)
-• Relative Volume
-• OBV (On-Balance Volume)
+**Scoring factors**
 
-ℹ️ Use /indicators for full explanations of each.
+| Factor | Description |
+|:-------|:------------|
+| RSI | Relative Strength Index |
+| ADX | Trend Strength |
+| MACD | Momentum |
+| SMA/EMA 20/50/100/200 | Moving Averages |
+| Relative Volume | Volume vs average |
+| OBV | On-Balance Volume |
 
+<details><summary>**ℹ️ Full Indicator Guide**</summary>
+
+Use `/indicators` for detailed explanations of each indicator, scoring rules, and how to read signals together.
+
+</details>
+
+---
 ⚠️ _Not financial advice. DYOR._"""
