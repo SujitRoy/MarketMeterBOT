@@ -179,6 +179,12 @@ async def on_search_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from bot import _send_rich_chunks
     await _send_rich_chunks(query.get_bot(), query.message.chat.id, message)
 
+    # Delete the loading message
+    try:
+        await query.delete_message()
+    except Exception:
+        pass
+
 
 async def fetch_live_for_symbol(symbol: str) -> Optional[dict]:
     """Fetch live data for a single symbol via TradingView."""

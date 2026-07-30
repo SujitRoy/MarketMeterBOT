@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 # ── Command Handlers ────────────────────────────────────────────────
 
-async def _reply(update: Update, text: str) -> None:
+async def _reply(update: Update, text: str, reply_markup=None) -> None:
     """
     Reply to a command, routing Rich Markdown through sendRichMessage.
 
@@ -46,9 +46,9 @@ async def _reply(update: Update, text: str) -> None:
     contain Rich-only syntax.
     """
     if _needs_rich(text):
-        await _send_rich_chunks(update.get_bot(), update.effective_chat.id, text)
+        await _send_rich_chunks(update.get_bot(), update.effective_chat.id, text, reply_markup=reply_markup)
     else:
-        await update.message.reply_text(text, parse_mode="Markdown")
+        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -412,7 +412,8 @@ def _split_rich_markdown(text: str,
 
 
 async def _send_rich_message(bot, chat_id: int, markdown: str,
-                              disable_notification: bool = False) -> dict:
+                              disable_notification: bool = False,
+                              reply_markup=None) -> dict:
     """
     Send one Bot API 10.1+ Rich Message via the local Bot API server.
 
@@ -429,11 +430,14 @@ async def _send_rich_message(bot, chat_id: int, markdown: str,
         "rich_message": {"markdown": markdown},
         "disable_notification": disable_notification,
     }
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup.to_dict() if hasattr(reply_markup, 'to_dict') else reply_markup
     return await bot._post("sendRichMessage", payload, api_kwargs={})
 
 
 async def _send_rich_chunks(bot, chat_id: int, markdown: str,
-                           disable_notification: bool = False) -> int:
+                           disable_notification: bool = False,
+                           reply_markup=None) -> int:
     """
     Send Rich Markdown as however many messages the 4096-char cap requires.
 
@@ -443,7 +447,8 @@ async def _send_rich_chunks(bot, chat_id: int, markdown: str,
     chunks = _split_rich_markdown(markdown)
     for i, chunk in enumerate(chunks, 1):
         await _send_rich_message(bot, chat_id, chunk,
-                                 disable_notification=disable_notification)
+                                 disable_notification=disable_notification,
+                                 reply_markup=reply_markup if i == 1 else None)
         if i < len(chunks):
             await asyncio.sleep(REPORT_CHUNK_DELAY)
     logger.info("Sent %d rich chunk(s) to %d (%d chars)",
