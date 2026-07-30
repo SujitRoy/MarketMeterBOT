@@ -8,9 +8,9 @@ import logging
 import re
 from datetime import date
 
-from telegram import Update
+from telegram import Update, MenuButtonCommands
 from telegram.ext import (
-    Application, CommandHandler, ContextTypes,
+    Application, CommandHandler, ContextTypes, CallbackQueryHandler,
 )
 from telegram.error import TelegramError, Forbidden
 
@@ -29,6 +29,8 @@ from report_generator import (
     generate_welcome_message, generate_help_message,
     generate_indicators_message,
 )
+from search_handler import search_handlers
+from search_handler import search_handlers
 
 logger = logging.getLogger(__name__)
 
@@ -168,8 +170,25 @@ def create_application() -> Application:
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("indicators", cmd_indicators))
 
-    logger.info("Bot application created with %d handlers", 7)
+    # Register search handlers
+    for h in search_handlers:
+        app.add_handler(h)
+
+    # Post-init: set menu button (≡) in chat typing area
+    app.post_init = _setup_menu_button
+
+    logger.info("Bot application created with %d handlers", 7 + len(search_handlers))
     return app
+
+
+async def _setup_menu_button(app: Application):
+    """Configure the menu button (≡) with commands list."""
+    from telegram import MenuButtonCommands
+    try:
+        await app.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+        logger.info("Menu button (≡) configured")
+    except Exception as e:
+        logger.warning("Failed to set menu button: %s", e)
 
 
 # ── Message Sending ─────────────────────────────────────────────────
