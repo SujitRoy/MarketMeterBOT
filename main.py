@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+"""
+MarketMeter — Main Entry Point
+────────────────────────────────
+Starts the Telegram bot, registers scheduled jobs, and runs the event loop.
+
+Usage:
+    python main.py                  # Normal start (bot + scheduler)
+    python main.py --sync           # Run sync once and exit
+    python main.py --backfill       # Run full historical backfill
+    python main.py --report         # Generate and broadcast report once
+    python main.py --analyze        # Run analysis only
+"""
+import argparse
+import asyncio
+import fcntl
+import logging
+import os
+import signal
+import sys
+from datetime import date
+from pathlib import Path
+
+from config import LOG_FILE, LOG_FORMAT, LOG_LEVEL, OWNER_CHAT_ID, LOG_MAX_BYTES, LOG_BACKUP_COUNT, DATA_DIR
+from database import init_db, get_db_stats
+from bot import create_application, send_to_owner
+from scheduler import setup_scheduled_jobs
+
+# ── Single-instance Lock ────────────────────────────────────────────
+# Referenced by main() but never defined, so every start raised
+# NameError: _acquire_lock -> systemd Restart=on-failure -> crash loop.
+LOCK_FILE = DATA_DIR / "marketmeter.lock"
+
+
+def _acquire_lock():
+    """
+    Take an exclusive advisory lock so only one instance touches the DB.
+
+    Returns the held fd, or None if another instance owns it. The fd must stay
+    open for the lifetime of the process: closing it releases the lock.
+    """
+    try:
+        fd = os.open(str(LOCK_FILE), os.O_RDWR | os.O_CREAT, 0o644)
+    except OSError as e:
+        logger.error(
+            "Cannot open lock file %s: %s. Verify the data directory is writable "
+            "(systemd ProtectHome/ProtectSystem can make it read-only).",
+            LOCK_FILE, e,
+        )
+        return None
+
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+
+    try:
+        os.truncate(fd, 0)
+        os.write(fd, f"{os.getpid()}\n".encode())
+    except OSError:
+        pass  # PID content is advisory only; the flock is what matters.
+
+    return fd
+
+# ── Logging Setup ───────────────────────────────────────────────────
+
+from logging.handlers import RotatingFileHandler
+
+# Rotating file handler owns the log file. The systemd unit deliberately does
+# NOT redirect stdout here as well: doing both wrote every line twice and let
+# the raw redirect grow past LOG_MAX_BYTES, bypassing rotation entirely.
+file_handler = RotatingFileHandler(
+    LOG_FILE,
+    maxBytes=LOG_MAX_BYTES,
+    backupCount=LOG_BACKUP_COUNT,
+    encoding="utf-8"
+)
+file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format=LOG_FORMAT,
+    handlers=[file_handler],
+)
+logger = logging.getLogger("MarketMeter")
+
+# Suppress noisy library logs
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.WARNING)
+logging.getLogger("nsefin").setLevel(logging.WARNING)
+
+
+# ── CLI Commands ────────────────────────────────────────────────────
+
+async def cmd_sync():
+    """Run incremental sync once."""
+    from data_fetcher import sync_incremental_data
+    from report_generator import generate_sync_status_message
+
+    logger.info("Running one-time sync...")
+    result = sync_incremental_data()
+    msg = generate_sync_status_message(result)
+    print(msg)
+
+    # If new data, run analysis
+    if result['status'] == 'completed' and result['total_records'] > 0:
+        logger.info("Running analysis on new data...")
+        from analyzer import run_batch_analysis
+        analysis_result = run_batch_analysis()
+        print(f"Analysis: {analysis_result['message']}")
+
+
+async def cmd_backfill():
+    """Run full historical backfill."""
+    from data_fetcher import backfill_historical_data
+
+    logger.info("Starting full historical backfill...")
+    print("This will download data from 2021-04-01 to today.")
+    print("Estimated time: 20-30 minutes for ~1100 trading days.")
+    response = input("Continue? (y/n): ").strip().lower()
+
+    if response != 'y':
+        print("Aborted.")
+        return
+
+    result = backfill_historical_data()
+    print(f"\nBackfill complete: {result['message']}")
+
+    # Run analysis after backfill
+    logger.info("Running initial analysis...")
+    from analyzer import run_batch_analysis
+    analysis_result = run_batch_analysis()
+    print(f"Analysis: {analysis_result['message']}")
+
+
+async def cmd_report():
+    """Generate and print report once."""
+    from report_generator import generate_morning_report
+    report = generate_morning_report()
+    print(report)
+
+
+async def cmd_analyze():
+    """Run analysis only."""
+    from analyzer import run_batch_analysis
+    result = run_batch_analysis()
+    print(result['message'])
+
+
+async def cmd_status():
+    """Print database status."""
+    stats = get_db_stats()
+    print("=" * 50)
+    print("MarketMeter Database Status")
+    print("=" * 50)
+    for key, value in stats.items():
+        print(f"  {key}: {value}")
+
+
+# ── Main Bot Runner ─────────────────────────────────────────────────
+
+async def run_bot():
+    """Start the bot with scheduled jobs."""
+    # Initialize database
+    init_db()
+    logger.info("Database initialized")
+
+    # Show startup stats
+    stats = get_db_stats()
+    logger.info("DB Stats: %d records, %d symbols, %d subscribers",
+                stats['total_records'], stats['unique_symbols'], stats['active_subscribers'])
+
+    # Create bot application
+    app = create_application()
+
+    # Register scheduled jobs
+    setup_scheduled_jobs(app)
+
+    # Send startup notification to owner
+    await send_to_owner(app, (
+        f"🟢 *MarketMeter Started*\n"
+        f"• Records: {stats['total_records']:,}\n"
+        f"• Symbols: {stats['unique_symbols']:,}\n"
+        f"• Subscribers: {stats['active_subscribers']}\n"
+        f"• Sync: 6:30 PM IST | Report: 8:00 AM IST"
+    ))
+
+    logger.info("Bot is running. Press Ctrl+C to stop.")
+
+    # Start polling
+    await app.initialize()
+    await app.start()
+
+    # Start polling in the background
+    polling_task = asyncio.create_task(
+        app.updater.start_polling(drop_pending_updates=True)
+    )
+
+    # Wait for shutdown signal
+    stop_event = asyncio.Event()
+
+    def signal_handler():
+        logger.info("Shutdown signal received")
+        stop_event.set()
+
+    loop = asyncio.get_event_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, signal_handler)
+        except NotImplementedError:
+            # Windows doesn't support add_signal_handler
+            pass
+
+    await stop_event.wait()
+
+    # Graceful shutdown
+    logger.info("Shutting down...")
+    await send_to_owner(app, "🔴 *MarketMeter Stopped*")
+
+    polling_task.cancel()
+    try:
+        await polling_task
+    except asyncio.CancelledError:
+        pass
+
+    await app.updater.stop()
+    await app.stop()
+    await app.shutdown()
+
+    logger.info("Bot stopped. Goodbye!")
+
+
+# ── Entry Point ─────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="MarketMeter — NSE Stock Analysis & Telegram Bot"
+    )
+    parser.add_argument(
+        "--sync", action="store_true",
+        help="Run incremental sync once and exit"
+    )
+    parser.add_argument(
+        "--backfill", action="store_true",
+        help="Run full historical backfill (2021-04-01 to today)"
+    )
+    parser.add_argument(
+        "--report", action="store_true",
+        help="Generate and print morning report"
+    )
+    parser.add_argument(
+        "--analyze", action="store_true",
+        help="Run technical analysis only"
+    )
+    parser.add_argument(
+        "--status", action="store_true",
+        help="Show database status"
+    )
+
+    args = parser.parse_args()
+
+    # ALL modes need the lock to prevent concurrent DB access/corruption
+    lock_fd = _acquire_lock()
+    if lock_fd is None:
+        logger.error("Another instance of MarketMeterBOT is already running. Exiting.")
+        sys.exit(1)
+
+    try:
+        if args.sync:
+            asyncio.run(cmd_sync())
+        elif args.backfill:
+            asyncio.run(cmd_backfill())
+        elif args.report:
+            asyncio.run(cmd_report())
+        elif args.analyze:
+            asyncio.run(cmd_analyze())
+        elif args.status:
+            asyncio.run(cmd_status())
+        else:
+            # Normal mode: run the bot
+            asyncio.run(run_bot())
+
+    finally:
+        # Release lock
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+            LOCK_FILE.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    main()

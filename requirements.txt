@@ -1,0 +1,18 @@
+# MarketMeter Dependencies
+# Install: venv/bin/pip install -r requirements.txt
+#
+# NSE BhavCopy is fetched directly from the official archive CSV, so nsefin is
+# no longer required. See data_fetcher.fetch_bhavcopy_csv for the rationale
+# (nsefin dropped the AVG_PRICE column and masked 404s as empty DataFrames).
+#
+# Versions are pinned to the majors this code was verified against. pandas 3.x
+# and python-telegram-bot 22.x are untested here; an unpinned install resolved
+# to both and is a silent breakage risk.
+pandas>=2.2,<3.0
+numpy>=1.26,<3.0
+
+# The [job-queue] extra pulls APScheduler. Without it Application.job_queue is
+# None and every scheduled job (18:30 sync, 08:30 report) silently never runs.
+python-telegram-bot[job-queue]>=21.0,<22.0
+
+requests>=2.31.0
