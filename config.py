@@ -37,6 +37,7 @@ TELEGRAM_API_BASE_URL = os.getenv("TELEGRAM_API_BASE_URL", "http://localhost:808
 TIMEZONE = "Asia/Kolkata"
 SYNC_TIME = os.getenv("MARKETMETER_SYNC_TIME", "18:30")      # 6:30 PM IST
 REPORT_TIME = os.getenv("MARKETMETER_REPORT_TIME", "08:30")   # 8:30 AM IST
+PREMARKET_TIME = os.getenv("MARKETMETER_PREMARKET_TIME", "09:00")  # 9:00 AM IST (pre-market live prices)
 
 # ── Data Fetching ──────────────────────────────────────────────────
 # First trading day of the reporting window (NSE opened 2022-01-03).
@@ -131,6 +132,29 @@ SYNC_RETRY_INTERVAL_MINUTES = 15
 # past this the file is not coming today, so the next 18:30 run picks it up.
 # Also keeps retries clear of the 09:00-10:30 cron window.
 SYNC_RETRY_UNTIL_HOUR = 23
+
+# ── Intraday (TradingView) ────────────────────────────────────────
+# TradingView session cookie for real-time data (free tier requires auth)
+TRADINGVIEW_SESSION_ID = os.getenv("TRADINGVIEW_SESSION_ID", "")
+
+# Market hours (IST)
+MARKET_OPEN_TIME = "09:15"
+MARKET_CLOSE_TIME = "15:30"
+
+# Symbols to track intraday (auto-populated from morning report top picks)
+# Can be overridden by adding more via /track command
+INTRADAY_SYMBOLS = [
+    "RELIANCE", "HDFCBANK", "ICICIBANK", "BHARTIARTL",
+    "TCS", "INFY", "ITC", "SBIN", "LT", "AXISBANK",
+    "KOTAKBANK", "BAJFINANCE", "HINDUNILVR", "ASIANPAINT",
+    "MARUTI", "SUNPHARMA", "TITAN", "ULTRACEMCO",
+]
+
+# Intraday ingest interval (minutes) — runs at :05, :10, :15 past each hour
+INTRADAY_INGEST_INTERVAL_MINUTES = 5
+
+# Intraday alert check times (IST)
+INTRADAY_ALERT_TIMES = ["11:00", "13:00", "15:00"]
 
 # ── Logging ─────────────────────────────────────────────────────────
 LOG_FILE = LOG_DIR / "bot.log"
