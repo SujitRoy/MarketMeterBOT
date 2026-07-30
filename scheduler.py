@@ -12,6 +12,7 @@ from telegram.ext import Application
 from config import (
     SYNC_TIME, REPORT_TIME, TIMEZONE, OWNER_CHAT_ID,
     SYNC_RETRY_INTERVAL_MINUTES, SYNC_RETRY_UNTIL_HOUR,
+    PREMARKET_TIME,
 )
 from data_fetcher import sync_incremental_data
 from analyzer import run_batch_analysis
@@ -20,6 +21,7 @@ from report_generator import (
     warm_report_cache,
 )
 from bot import send_to_owner, send_report_to_all
+from premarket_report import send_premarket_report
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +208,7 @@ def setup_scheduled_jobs(app: Application):
 
     sync_time = _parse_time(SYNC_TIME)
     report_time = _parse_time(REPORT_TIME)
+    premarket_time = _parse_time(PREMARKET_TIME)
 
     # Daily sync at 6:30 PM IST
     job_queue.run_daily(
@@ -224,5 +227,14 @@ def setup_scheduled_jobs(app: Application):
         name="daily_report",
     )
     logger.info("Scheduled daily report at %s IST", REPORT_TIME)
+
+    # Pre-market live prices at 9:00 AM IST
+    job_queue.run_daily(
+        send_premarket_report,
+        time=premarket_time,
+        days=(0, 1, 2, 3, 4),  # Mon-Fri only
+        name="premarket_report",
+    )
+    logger.info("Scheduled pre-market report at %s IST (Mon-Fri)", PREMARKET_TIME)
 
     logger.info("All scheduled jobs registered")

@@ -742,3 +742,173 @@ def get_db_stats() -> dict:
             "date_to": cache.get('date_to') or None,
             "active_subscribers": subs,
         }
+
+
+# ── Intraday Tables ──────────────────────────────────────────────────
+
+_INTRADAY_SCHEMA = """
+-- 5-minute candles for tracked symbols (intraday)
+CREATE TABLE IF NOT EXISTS intraday_candles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,
+    candle_ts TIMESTAMP NOT NULL,        -- 5-min bucket start (IST)
+    open REAL,
+    high REAL,
+    low REAL,
+    close REAL,
+    volume INTEGER,
+    vwap REAL,                           -- Session VWAP from TradingView
+    created_at TIMESTAMP DEFAULT (datetime('now', 'localtime')),
+    UNIQUE(symbol, candle_ts)
+);
+
+CREATE INDEX IF NOT EXISTS idx_intraday_symbol_ts
+    ON intraday_candles(symbol, candle_ts);
+
+-- Intraday alerts log
+CREATE TABLE IF NOT EXISTS intraday_alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,
+    alert_type TEXT NOT NULL,            -- BREAKOUT, VOLUME_SPIKE, RSI_EXTREME, VWAP_RECLAIM
+    candle_ts TIMESTAMP NOT NULL,
+    price REAL,
+    details TEXT,                        -- JSON with indicator values
+    created_at TIMESTAMP DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_alerts_symbol_ts
+    ON intraday_alerts(symbol, candle_ts);
+
+-- Symbols tracked for intraday (auto from morning report + manual)
+CREATE TABLE IF NOT EXISTS tracked_symbols (
+    symbol TEXT PRIMARY KEY,
+    added_by TEXT DEFAULT 'AUTO_REPORT', -- AUTO_REPORT, MANUAL
+    added_at TIMESTAMP DEFAULT (datetime('now', 'localtime')),
+    active BOOLEAN DEFAULT 1
+);
+"""
+
+
+def init_intraday_tables():
+    """Create intraday tables if they don't exist."""
+    with get_connection() as conn:
+        conn.executescript(_INTRADAY_SCHEMA)
+    logger.info("Intraday tables initialized")
+
+
+def upsert_intraday_candles(rows: list[dict]) -> int:
+    """Bulk insert/update 5-minute candles."""
+    if not rows:
+        return 0
+
+    with get_connection() as conn:
+        before = conn.total_changes
+        conn.executemany("""
+            INSERT OR REPLACE INTO intraday_candles
+                (symbol, candle_ts, open, high, low, close, volume, vwap)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, [
+            (r["symbol"], r["candle_ts"], r.get("open"), r.get("high"),
+             r.get("low"), r.get("close"), r.get("volume"), r.get("vwap"))
+            for r in rows
+        ])
+        return conn.total_changes - before
+
+
+def get_intraday_candles(symbol: str, from_ts: str = None, limit: int = 78) -> list[dict]:
+    """
+    Get intraday candles for a symbol.
+    Default limit 78 = 6.5 hours * 12 (5-min buckets) = full trading day.
+    """
+    with get_connection() as conn:
+        if from_ts:
+            rows = conn.execute("""
+                SELECT * FROM intraday_candles
+                WHERE symbol = ? AND candle_ts >= ?
+                ORDER BY candle_ts ASC
+                LIMIT ?
+            """, (symbol, from_ts, limit)).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT * FROM intraday_candles
+                WHERE symbol = ?
+                ORDER BY candle_ts DESC
+                LIMIT ?
+            """, (symbol, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def add_tracked_symbol(symbol: str, added_by: str = "MANUAL") -> bool:
+    """Add symbol to intraday tracking list."""
+    with get_connection() as conn:
+        cur = conn.execute("""
+            INSERT OR REPLACE INTO tracked_symbols (symbol, added_by, active)
+            VALUES (?, ?, 1)
+        """, (symbol, added_by))
+        return cur.rowcount > 0
+
+
+def get_tracked_symbols() -> list[dict]:
+    """Get all active tracked symbols."""
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT symbol, added_by, added_at FROM tracked_symbols
+            WHERE active = 1
+            ORDER BY added_at DESC
+        """).fetchall()
+        return [dict(r) for r in rows]
+
+
+def remove_tracked_symbol(symbol: str) -> bool:
+    """Soft-delete a tracked symbol."""
+    with get_connection() as conn:
+        cur = conn.execute("""
+            UPDATE tracked_symbols SET active = 0 WHERE symbol = ?
+        """, (symbol,))
+        return cur.rowcount > 0
+
+
+def log_intraday_alert(symbol: str, alert_type: str, candle_ts: str,
+                        price: float, details: dict) -> int:
+    """Log an intraday alert."""
+    import json
+    with get_connection() as conn:
+        cur = conn.execute("""
+            INSERT INTO intraday_alerts (symbol, alert_type, candle_ts, price, details)
+            VALUES (?, ?, ?, ?, ?)
+        """, (symbol, alert_type, candle_ts, price, json.dumps(details)))
+        return cur.lastrowid
+
+
+def get_recent_alerts(symbol: str = None, hours: int = 24) -> list[dict]:
+    """Get recent intraday alerts."""
+    with get_connection() as conn:
+        if symbol:
+            rows = conn.execute("""
+                SELECT * FROM intraday_alerts
+                WHERE symbol = ? AND candle_ts >= datetime('now', ?)
+                ORDER BY candle_ts DESC
+            """, (symbol, f'-{hours} hours')).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT * FROM intraday_alerts
+                WHERE candle_ts >= datetime('now', ?)
+                ORDER BY candle_ts DESC
+                LIMIT 100
+            """, (f'-{hours} hours',)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def prune_old_intraday(days: int = 30):
+    """Remove intraday data older than N days."""
+    with get_connection() as conn:
+        conn.execute("""
+            DELETE FROM intraday_candles
+            WHERE candle_ts < datetime('now', ?)
+        """, (f'-{days} days',))
+        conn.execute("""
+            DELETE FROM intraday_alerts
+            WHERE created_at < datetime('now', ?)
+        """, (f'-{days} days',))
+    logger.info("Pruned intraday data older than %d days", days)
+
