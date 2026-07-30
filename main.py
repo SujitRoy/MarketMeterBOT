@@ -166,31 +166,40 @@ async def run_bot():
     init_db()
     logger.info("Database initialized")
 
-    # Show startup stats
-    stats = get_db_stats()
-    logger.info("DB Stats: %d records, %d symbols, %d subscribers",
-                stats['total_records'], stats['unique_symbols'], stats['active_subscribers'])
-
     # Create bot application
     app = create_application()
 
     # Register scheduled jobs
     setup_scheduled_jobs(app)
 
-    # Send startup notification to owner
+    # Initialize bot first
+    await app.initialize()
+    
+    # Set menu button (≡) with commands list
+    from telegram import MenuButtonCommands
+    try:
+        await app.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+        logger.info("Menu button (≡) configured")
+    except Exception as e:
+        logger.warning("Failed to set menu button: %s", e)
+
+    await app.start()
+
+    # Show startup stats
+    stats = get_db_stats()
+    logger.info("DB Stats: %d records, %d symbols, %d subscribers",
+                stats['total_records'], stats['unique_symbols'], stats['active_subscribers'])
+
+    # Send startup notification to owner (now bot is initialized)
     await send_to_owner(app, (
         f"🟢 *MarketMeter Started*\n"
         f"• Records: {stats['total_records']:,}\n"
         f"• Symbols: {stats['unique_symbols']:,}\n"
-        f"• Subscribers: {stats['active_subscribers']}\n"
+        f"• Subscribers: {stats['active_subscribers']:,}\n"
         f"• Sync: 6:30 PM IST | Report: 8:00 AM IST"
     ))
 
     logger.info("Bot is running. Press Ctrl+C to stop.")
-
-    # Start polling
-    await app.initialize()
-    await app.start()
 
     # Start polling in the background
     polling_task = asyncio.create_task(
