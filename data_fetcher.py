@@ -40,14 +40,40 @@ class BhavcopyNotPublished(Exception):
 
 # ── Trading Calendar ────────────────────────────────────────────────
 
+# NSE trading holidays (CM segment), kept as iso-strings so the "does NSE
+# publish today?" decision is data-driven and never reaches the network on a
+# known closed day. Without this, a closed Monday/Friday was downloaded,
+# 404'd, then misclassified 'not_available' and retried forever.
+# Populate one rolling year ahead; covers 2024-2026 sync window.
+NSE_HOLIDAYS = {
+    # 2024
+    "2024-01-26", "2024-03-08", "2024-03-25", "2024-03-29", "2024-04-11",
+    "2024-04-17", "2024-04-21", "2024-05-23", "2024-06-17", "2024-07-17",
+    "2024-08-15", "2024-10-02", "2024-11-01", "2024-11-15", "2024-12-25",
+    # 2025
+    "2025-01-26", "2025-02-26", "2025-03-14", "2025-03-31", "2025-04-10",
+    "2025-04-18", "2025-05-01", "2025-08-15", "2025-10-01", "2025-10-02",
+    "2025-10-21", "2025-10-22", "2025-11-05", "2025-12-25",
+    # 2026 (extend each year; a date not listed falls back to the 404 path)
+    "2026-01-26", "2026-02-17", "2026-03-10", "2026-03-20", "2026-03-31",
+    "2026-04-02", "2026-04-13", "2026-05-01", "2026-06-26", "2026-08-15",
+    "2026-09-14", "2026-10-02", "2026-10-20", "2026-11-09", "2026-12-25",
+}
+
+
+def is_nse_holiday(d: date) -> bool:
+    """True when NSE is closed and publishes no BhavCopy that day."""
+    return d.weekday() >= 5 or d.isoformat() in NSE_HOLIDAYS
+
+
 def is_trading_day(d: date) -> bool:
-    """Check if a date is a weekday (Mon-Fri)."""
-    return d.weekday() < 5
+    """Check if a date is an NSE trading day (weekday and not a holiday)."""
+    return not is_nse_holiday(d)
 
 
 def is_weekend_or_holiday(d: date) -> bool:
-    """Check if date is a weekend. NSE holiday calendar not included."""
-    return d.weekday() >= 5
+    """True for weekends and NSE holidays (both closed)."""
+    return is_nse_holiday(d)
 
 
 def get_trading_days(start_date: date, end_date: date) -> list[date]:
@@ -214,13 +240,18 @@ def download_and_store_date(trade_date: date,
     rows = df.to_dict(orient='records')
     inserted = insert_bhavcopy_batch(rows)
 
+    # Status stays 'success' (sync_log CHECK constraint admits only a fixed set),
+    # which is accurate: the date downloaded and reconciled. The honest signal
+    # lives in records_count + net_new, so a duplicate/partial re-run is never
+    # mistaken for a fresh batch of rows.
     log_sync(trade_date, 'success', inserted)
-    logger.info("Stored %d records for %s", inserted, trade_date)
+    logger.info("Reconciled %s: %d net-new rows", trade_date, inserted)
 
     return {
         'date': trade_date,
         'status': 'success',
         'records': inserted,
+        'net_new': inserted > 0,
         'message': message,
     }
 
@@ -299,6 +330,7 @@ def sync_incremental_data() -> dict:
             'holidays': 0,
             'not_available': [],
             'synced_dates': [],
+            'per_date_records': {},
             'total_records': 0,
         }
 
@@ -310,7 +342,11 @@ def sync_incremental_data() -> dict:
             if result['status'] == 'success':
                 results['success'] += 1
                 results['total_records'] += result['records']
-                results['synced_dates'].append(trade_date.isoformat())
+                # Only dates that actually added rows belong in the receipt and
+                # banner -- a 0-net-new re-run must not be announced as inserted.
+                if result['records'] > 0:
+                    results['synced_dates'].append(trade_date.isoformat())
+                    results['per_date_records'][trade_date.isoformat()] = result['records']
             elif result['status'] == 'holiday':
                 results['holidays'] += 1
             elif result['status'] == 'not_available':

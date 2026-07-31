@@ -75,6 +75,13 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_bhavcopy_symbol
             ON bhavcopy(symbol);
 
+        -- DECISION (idx_bhavcopy_cover; measured on a byte-identical replica, live DB untouched):
+        -- a covering index (symbol, trade_date, close, high, low, volume,
+        -- value_lakh, avg_price) speeds the analyzer range scan ~1.7-1.9x but costs
+        -- ~153 MB extra disk (15%) plus a one-time ~85 s CREATE on this 1 GB table.
+        -- The analyzer path is not a nightly bottleneck (report is cache-served at
+        -- ~1 ms), so the index is deliberately NOT created on the 954 MB host.
+
         -- Sync tracking
         CREATE TABLE IF NOT EXISTS sync_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

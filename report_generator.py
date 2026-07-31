@@ -14,7 +14,7 @@ from database import (
     get_analysis_by_recommendation, get_db_stats, get_sync_status,
     get_resolved_analysis_date, get_cached_report, put_cached_report,
 )
-from analyzer import get_market_outlook
+from analyzer import get_market_outlook, get_analysis_aggregate
 
 logger = logging.getLogger(__name__)
 
@@ -187,9 +187,20 @@ def generate_morning_report(analysis_date: Optional[date] = None,
 
 
 def _render_morning_report(analysis_date: date) -> str:
-    """Curated 3-pick + 10-row scan report in Rich Markdown."""
-    grouped = get_analysis_by_recommendation(analysis_date)
-    outlook = get_market_outlook(analysis_date)
+    """Curated 3-pick + 10-row scan report in Rich Markdown.
+
+    BUG-C (single-pass): previously this called get_analysis_by_recommendation and
+    get_market_outlook, each independently re-querying the full daily_analysis table
+    (2x the reads for identical rows). Now get_analysis_aggregate reads the rows
+    ONCE and returns (grouped, outlook). Output is byte-identical; the change
+    strictly halves the analysis-fetch cost of a report render.
+    """
+    return _render_morning_report_single_pass(analysis_date)
+
+
+def _render_morning_report_single_pass(analysis_date: date) -> str:
+    """Render using one analysis-row fetch; outlook + grouping derived in memory."""
+    grouped, outlook = get_analysis_aggregate(analysis_date)
     db_stats = get_db_stats()
 
     total_stocks = sum(len(v) for v in grouped.values())

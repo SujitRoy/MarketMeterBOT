@@ -35,6 +35,39 @@ logger = logging.getLogger(__name__)
 RETRY_JOB_NAME = "sync_retry"
 
 
+async def confirm_bhavcopy_insertion(app, result: dict) -> None:
+    """
+    Explicit owner receipt after a real (>0-record) BhavCopy insert.
+
+    Each trading day the owner needs a positive confirmation that the 18:30
+    job actually landed rows — the generic sync banner double-counts a re-run
+    date as 'inserted' and says nothing about net-new. This receipt lists the
+    per-date record counts so a partial sync (some dates landed, some pending)
+    is visible at a glance instead of inferred from failures.
+    """
+    inserted = result.get('total_records', 0)
+    if inserted <= 0:
+        return
+    breakdown = result.get('per_date_records') or {}
+    lines = [
+        f"{result.get('synced_dates', []) and '📥' or '📥'} "
+        f"**BhavCopy Insertion Confirmed**",
+        "",
+        f"✅ **{inserted:,} net-new records** written",
+    ]
+    if breakdown:
+        lines.append("")
+        for d, n in breakdown.items():
+            lines.append(f"   • {d}: {n:,} rows")
+    pending = result.get('not_available') or []
+    if pending:
+        lines.append("")
+        lines.append(f"⏳ Still pending (NSE not published): {', '.join(pending)}")
+    await send_to_owner(app, "\n".join(lines), use_rich=True)
+    logger.info("Owner insertion receipt sent: %d records across %d dates",
+                inserted, len(breakdown) or len(result.get('synced_dates') or []))
+
+
 def _parse_time(time_str: str) -> time:
     """Parse 'HH:MM' string to a time object stamped with IST.
 
@@ -58,6 +91,7 @@ async def _run_sync_cycle(app, *, is_retry: bool = False) -> dict:
     inserted = result.get('total_records', 0)
 
     if result.get('status') == 'completed' and inserted > 0:
+        await confirm_bhavcopy_insertion(app, result)
         prefix = "🔁 **Retry Succeeded — BhavCopy Inserted**" if is_retry \
                  else "✅ **BhavCopy Data Inserted**"
         dates = result.get('synced_dates') or []
@@ -95,7 +129,9 @@ def _schedule_sync_retry(context) -> bool:
     is not arriving today, so we stop and let the next 18:30 run handle it --
     this also keeps retries out of the 09:00-10:30 cron window.
     """
-    if datetime.now().hour >= SYNC_RETRY_UNTIL_HOUR:
+    # IST-aware cutoff: a naive datetime.now() is only correct when the host
+    # clock happens to be IST. datetime.now(tz=IST) is correct anywhere.
+    if datetime.now(IST).hour >= SYNC_RETRY_UNTIL_HOUR:
         return False
 
     jq = context.job_queue
@@ -122,11 +158,13 @@ async def _sync_retry_job(context):
     try:
         result = await _run_sync_cycle(app, is_retry=True)
 
-        if result.get('total_records', 0) > 0:
-            logger.info("Retry succeeded; stopping retry loop")
-            return
-
+        # Bug #3 fix: a positive total_records does NOT mean work is done. If NSE
+        # successfully published one date but a *different* date is still
+        # not_available, the retry loop must keep going until every pending date
+        # lands or the cutoff hour passes. Only stop when nothing is left pending.
         if result.get('not_available'):
+            logger.info("%d record(s) landed but %d date(s) still pending; keeping retry loop alive",
+                        result.get('total_records', 0), len(result.get('not_available', [])))
             if not _schedule_sync_retry(context):
                 pending = ', '.join(str(d) for d in result['not_available'])
                 await send_to_owner(app, (
@@ -149,7 +187,7 @@ async def _daily_sync_job(context):
     Runs at SYNC_TIME (default 6:30 PM IST).
     """
     logger.info("=" * 60)
-    logger.info("DAILY SYNC JOB STARTED at %s", datetime.now().strftime('%Y-%m-%d %H:%M:%S IST'))
+    logger.info("DAILY SYNC JOB STARTED at %s", datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S IST'))
     logger.info("=" * 60)
 
     app = context.application
@@ -192,7 +230,7 @@ async def _daily_report_job(context):
     Runs at REPORT_TIME (default 8:00 AM IST).
     """
     logger.info("=" * 60)
-    logger.info("DAILY REPORT JOB STARTED at %s", datetime.now().strftime('%Y-%m-%d %H:%M:%S IST'))
+    logger.info("DAILY REPORT JOB STARTED at %s", datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S IST'))
     logger.info("=" * 60)
 
     try:
