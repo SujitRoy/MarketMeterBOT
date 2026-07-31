@@ -29,6 +29,8 @@ from report_generator import (
 )
 from bot import send_to_owner, send_report_to_all
 from premarket_report import send_premarket_report
+from premarket_open_report import send_open_crosscheck_report
+from premarket_combined_report import send_combined_premarket_report
 
 logger = logging.getLogger(__name__)
 
@@ -260,6 +262,35 @@ async def _premarket_report_job(context):
             logger.error("Failed to send premarket failure alert")
 
 
+async def _open_crosscheck_job(context):
+    """
+    Market-open cross-check at 09:15 IST (Mon–Fri).
+
+    Merges the EOD analysis (morning report data) with live 09:15 prices so the
+    owner can validate the morning calls against the actual open.
+    """
+    logger.info("=" * 60)
+    logger.info("MARKET-OPEN CROSS-CHECK JOB STARTED at %s",
+                datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S IST'))
+    logger.info("=" * 60)
+    try:
+        result = await send_open_crosscheck_report(context.application)
+        logger.info("Market-open cross-check job completed: %s", result)
+        if result.get('sent', 0) == 0:
+            await send_to_owner(context.application, (
+                "⚠️ **Market-open cross-check: nothing sent**\n"
+                "The 09:15 job ran but delivered to 0 recipients. "
+                "(Likely no live data / no analysis yet.)"
+            ), use_rich=True)
+    except Exception as e:
+        logger.error("Market-open cross-check job failed: %s", e, exc_info=True)
+        try:
+            await send_to_owner(context.application,
+                f"❌ *Market-open cross-check failed:*\n```\n{str(e)[:400]}\n```")
+        except Exception:
+            logger.error("Failed to send cross-check failure alert")
+
+
 async def _daily_report_job(context):
     """
     Daily report job: generates and broadcasts morning report.
@@ -313,8 +344,7 @@ def setup_scheduled_jobs(app: Application):
     )
     logger.info("Scheduled daily report at %s IST", REPORT_TIME)
 
-    # Pre-market live prices at 9:00 AM IST — via the (context)-shaped job
-    # wrapper, not the raw (app)-shaped reporter. See _premarket_report_job.
+    # Pre-market live prices at 9:00 AM IST (Mon-Fri)
     job_queue.run_daily(
         _premarket_report_job,
         time=premarket_time,
@@ -322,5 +352,15 @@ def setup_scheduled_jobs(app: Application):
         name="premarket_report",
     )
     logger.info("Scheduled pre-market report at %s IST (Mon-Fri)", PREMARKET_TIME)
+
+    # Market-open cross-check at 9:15 AM IST (Mon-Fri)
+    open_check_time = _parse_time("09:15")
+    job_queue.run_daily(
+        _open_crosscheck_job,
+        time=open_check_time,
+        days=(0, 1, 2, 3, 4),  # Mon-Fri only
+        name="open_crosscheck_report",
+    )
+    logger.info("Scheduled market-open cross-check at 09:15 IST (Mon-Fri)")
 
     logger.info("All scheduled jobs registered")
