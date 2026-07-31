@@ -55,5 +55,22 @@ class TestC_SinglePass(unittest.TestCase):
             self.assertIn(token, r, f"report lost section marker: {token}")
 
 
+class TestStatusRichTable(unittest.TestCase):
+    """Regression for /status not rendering as rich: the local Bot API server only
+    parses a pipe-table as a native RichBlockTable when it starts a fresh paragraph
+    (blank line before). Bug: '**Recent Syncs**' was immediately followed by
+    '| Date |...' so the server returned it inside a 'paragraph' block → the user
+    saw raw pipe text. Founder confirmed probe-correct vs /status-plain.
+    """
+    def test_status_message_has_blank_line_before_table(self):
+        m = rg.generate_status_message()
+        self.assertIn('**Recent Syncs**\n\n| Date |', m,
+                      "/status sync table must be preceded by a blank line to render as a native table")
+        # There must be a |...| header block (server table) after the blank line
+        import re
+        self.assertRegex(m, r'(?m)^\| Date \| Status \| Records \|$',
+                         "syncs must be formatted as a markdown table header")
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

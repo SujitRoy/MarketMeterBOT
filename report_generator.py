@@ -466,6 +466,10 @@ def generate_status_message() -> str:
         f"• Subscribers: {db_stats['active_subscribers']}",
         "",
         "**Recent Syncs**",
+        "",  # blank line required: the local Bot API server only parses a
+             # pipe-table as a native RichBlockTable when it starts a fresh
+             # paragraph. Adjacent to '**Recent Syncs**' it flattened to a
+             # paragraph and /status rendered as raw pipe text.
     ]
 
     if sync_logs:
