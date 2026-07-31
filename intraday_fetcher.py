@@ -39,6 +39,7 @@ def build_query(symbols: list[str]) -> dict:
         "options": {"lang": "en"},
         "columns": [
             "name",
+            "description",
             # Price + intraday (existing)
             "close", "open", "high", "low", "volume",
             "change", "change_abs", "change_from_open", "change_from_open_abs",
