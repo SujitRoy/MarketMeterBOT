@@ -224,6 +224,42 @@ async def _daily_sync_job(context):
             logger.error("Failed to send failure alert to owner")
 
 
+async def _premarket_report_job(context):
+    """
+    Pre-market report at 09:00 IST (Mon–Fri).
+
+    JobQueue ALWAYS invokes job callbacks as callback(context). daily_report and
+    daily_sync follow this shape; the premarket job had been registering the raw
+    send_premarket_report(app) coroutine and on 2026-07-31 never produced a
+    'Running job premarket_report' or any exception after a restart close to the
+    window — the run was lost silently. A dedicated (context)-shaped callback
+    matches the other jobs, guarantees the Application resolves, and lets us
+    notify the owner if the send itself fails.
+    """
+    logger.info("=" * 60)
+    logger.info("PREMARKET REPORT JOB STARTED at %s",
+                datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S IST'))
+    logger.info("=" * 60)
+    try:
+        result = await send_premarket_report(context.application)
+        logger.info("Premarket report job completed: %s", result)
+        # If nothing actually reached the owner, say so explicitly — silence here
+        # is how the 09:00 run went missing unnoticed.
+        if result.get('sent', 0) == 0:
+            await send_to_owner(context.application, (
+                "⚠️ **Pre-market report: nothing sent**\n"
+                "The 09:00 job ran but delivered to 0 recipients. "
+                "(Likely no live data / no analysis yet.)"
+            ), use_rich=True)
+    except Exception as e:
+        logger.error("Premarket report job failed: %s", e, exc_info=True)
+        try:
+            await send_to_owner(context.application,
+                f"❌ *Pre-market report failed:*\n```\n{str(e)[:400]}\n```")
+        except Exception:
+            logger.error("Failed to send premarket failure alert")
+
+
 async def _daily_report_job(context):
     """
     Daily report job: generates and broadcasts morning report.
@@ -277,9 +313,10 @@ def setup_scheduled_jobs(app: Application):
     )
     logger.info("Scheduled daily report at %s IST", REPORT_TIME)
 
-    # Pre-market live prices at 9:00 AM IST
+    # Pre-market live prices at 9:00 AM IST — via the (context)-shaped job
+    # wrapper, not the raw (app)-shaped reporter. See _premarket_report_job.
     job_queue.run_daily(
-        send_premarket_report,
+        _premarket_report_job,
         time=premarket_time,
         days=(0, 1, 2, 3, 4),  # Mon-Fri only
         name="premarket_report",
