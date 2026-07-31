@@ -6,7 +6,7 @@ os.environ.setdefault("MARKETMETER_BOT_TOKEN", "audit-dummy-token")
 os.environ.setdefault("MARKETMETER_OWNER_CHAT_ID", "620150504")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import data_fetcher as df  # noqa: E402
+from src.data.fetchers.nse_bhavcopy import is_nse_holiday, is_trading_day as df  # noqa: E402
 
 
 class TestBug1_HolidayCalendar(unittest.TestCase):

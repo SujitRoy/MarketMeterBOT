@@ -1,0 +1,95 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "marketmeter-bot"
+version = "1.0.0"
+description = "NSE Stock Analysis & Telegram Bot with Technical Indicators"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "MarketMeter", email = "marketmeter@example.com"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pandas>=2.2,<3.0",
+    "numpy>=1.26,<3.0",
+    "python-telegram-bot[job-queue]>=21.0,<22.0",
+    "requests>=2.31.0",
+    "rapidfuzz>=3.0,<4.0",
+    "jinja2>=3.1,<4.0",
+    "python-dotenv>=1.0,<2.0",
+    "pytz>=2024.1,<2025.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<9.0",
+    "pytest-asyncio>=0.23,<1.0",
+    "black>=24.0,<25.0",
+    "mypy>=1.9,<2.0",
+    "ruff>=0.4,<1.0",
+]
+backtest = [
+    "fastbt>=0.1,<1.0",
+]
+
+[project.scripts]
+marketmeter = "src.main:main"
+marketmeter-cli = "src.cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["src*"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.black]
+line-length = 100
+target-version = ['py312']
+include = '\.pyi?$'
+exclude = '''
+/(
+  \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+select = ["E", "F", "I", "UP", "W"]
+ignore = ["E501"]

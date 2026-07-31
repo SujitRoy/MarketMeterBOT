@@ -22,14 +22,15 @@ os.environ.setdefault("TELEGRAM_API_BASE_URL", "http://localhost:9/bot")  # unus
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import config                                   # noqa: E402
-import data_fetcher as df_mod                   # noqa: E402
-import report_generator as rg                   # noqa: E402
-import scheduler as sch                         # noqa: E402
-import database as db                           # noqa: E402
-import analyzer as az                           # noqa: E402
-import bot as bot_mod                           # noqa: E402
-import premarket_report as pmr                  # noqa: E402
+from src.core import config                                   # noqa: E402
+from src.data.fetchers.nse_bhavcopy import is_nse_holiday, is_trading_day as df_mod                   # noqa: E402
+from src.reports.report_generator import generate_morning_report as rg                   # noqa: E402
+from src.scheduler.scheduler import setup_scheduled_jobs as sch                         # noqa: E402
+from src.scheduler.scheduler import _run_sync_cycle, confirm_bhavcopy_insertion as cbi  # noqa: E402
+from src.database import database as db                           # noqa: E402
+from src.analysis.analyzer import run_batch_analysis as az                           # noqa: E402
+from src.bot import bot as bot_mod                           # noqa: E402
+from src.reports.premarket.premarket_report import send_combined_premarket_report as pmr  # noqa: E402
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -71,7 +72,7 @@ class TestReinsertion(unittest.TestCase):
                  'value_lakh': 1, 'del_pct': 50, 'trade_date': '2024-01-02',
                  'avg_price': 10.0}]
         # First insert
-        import database
+        from src.database import database
         conn = sqlite3 = database.sqlite3.connect(':memory:')
         conn.execute("""CREATE TABLE bhavcopy(symbol,series,open,high,low,close,last,
             prevclose,volume,value_lakh,del_pct,avg_price,trade_date,UNIQUE(symbol,trade_date))""")
@@ -99,7 +100,7 @@ class TestStatsCacheDrift(unittest.TestCase):
         # _update_stats_cache adds the RAW inserted count from INSERT OR IGNORE
         # (all attempted) rather than net-new; on a backfill re-run it drifts.
         # Assert the cached counter equals real COUNT(*).
-        import database, sqlite3
+        from src.database import database, sqlite3
         conn = database.sqlite3.connect(':memory:')
         conn.executescript("""
           CREATE TABLE bhavcopy(id INTEGER PRIMARY KEY AUTOINCREMENT, symbol, series DEFAULT 'EQ',
@@ -139,11 +140,8 @@ class TestSyncResultSemantics(unittest.TestCase):
 # ═════════════════════════════════════════════════════════════════════════════
 class TestOwnerConfirmation(unittest.TestCase):
     def test_confirm_bhavcopy_insertion_exists(self):
-        self.assertTrue(hasattr(pmr, 'confirm_bhavcopy_insertion') or
-                        hasattr(sch, 'confirm_bhavcopy_insertion') or
-                        hasattr(db, 'confirm_bhavcopy_insertion'),
-                        "no module implements confirm_bhavcopy_insertion → "
-                        "owner gets no positive BhavCopy-insertion receipt")
+        self.assertTrue(hasattr(cbi, '__call__'),
+                        "confirm_bhavcopy_insertion must be a callable")
 
     def test_owner_insert_receipt_relayed_after_sync(self):
         import inspect
@@ -159,7 +157,7 @@ class TestRetryLoop(unittest.TestCase):
     def test_retry_rearm_still_active_at_2359(self):
         # _schedule_sync_retry uses `hour >= SYNC_RETRY_UNTIL_HOUR` → False only
         # when hour>23. At 23:59 it still arms. Probe the actual guard logic.
-        import scheduler
+        from src.scheduler.scheduler import setup_scheduled_jobs
         # Simulate the boundary: the predicate is `datetime.now().hour >= cutoff`.
         # With cutoff=23 this is True at 23:xx, so a retry STILL arms at 23:59.
         # Desired: once past 23:00 no further retry should be armed.

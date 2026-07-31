@@ -9,8 +9,8 @@ os.environ.setdefault("MARKETMETER_BOT_TOKEN", "audit-dummy-token")
 os.environ.setdefault("MARKETMETER_OWNER_CHAT_ID", "620150504")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import report_generator as rg  # noqa: E402
-import database as db         # noqa: E402
+from src.reports.report_generator import generate_morning_report as rg  # noqa: E402
+from src.database import database as db         # noqa: E402
 
 
 class TestC_SinglePass(unittest.TestCase):

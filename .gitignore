@@ -21,3 +21,7 @@ logs/*.log
 # OS
 .DS_Store
 Thumbs.db
+# Runtime data dirs (untracked)
+data/
+src/core/data/
+src/core/logs/

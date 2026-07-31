@@ -9,7 +9,7 @@ os.environ.setdefault("MARKETMETER_BOT_TOKEN", "audit-dummy-token")
 os.environ.setdefault("MARKETMETER_OWNER_CHAT_ID", "620150504")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import scheduler as s  # noqa: E402
+from src.scheduler.scheduler import setup_scheduled_jobs as s  # noqa: E402
 
 
 class TestE2E_OwnerFlow(unittest.IsolatedAsyncioTestCase):

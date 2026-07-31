@@ -9,7 +9,7 @@ os.environ.setdefault("MARKETMETER_BOT_TOKEN", "audit-dummy-token")
 os.environ.setdefault("MARKETMETER_OWNER_CHAT_ID", "620150504")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import scheduler as s   # noqa: E402
+from src.scheduler.scheduler import setup_scheduled_jobs as s   # noqa: E402
 
 
 class TestBug2_OwnerConfirmAfterInsert(unittest.TestCase):
@@ -27,7 +27,7 @@ class TestBug6b_ZeroNetNewIsVisible(unittest.TestCase):
         the owner banner would otherwise treat it as complete."""
         import pandas as pd
         from unittest.mock import patch
-        import data_fetcher as df
+        from src.data.fetchers.nse_bhavcopy import is_nse_holiday, is_trading_day as df
         rowish = pd.DataFrame([{'symbol': 'X', 'series': 'EQ', 'open': 1, 'high': 1,
                                'low': 1, 'close': 10.0, 'last': 10, 'prevclose': 9,
                                'volume': 1000, 'value_lakh': 1, 'del_pct': 50,
@@ -44,7 +44,7 @@ class TestBug6b_ZeroNetNewIsVisible(unittest.TestCase):
         """A 0-net-new date must not appear in the owner's inserted-dates banner."""
         import pandas as pd
         from unittest.mock import patch
-        import data_fetcher as df
+        from src.data.fetchers.nse_bhavcopy import is_nse_holiday, is_trading_day as df
         from datetime import timedelta
         rowish = pd.DataFrame([{'symbol': 'X', 'series': 'EQ', 'open': 1, 'high': 1,
                                'low': 1, 'close': 10.0, 'last': 10, 'prevclose': 9,
