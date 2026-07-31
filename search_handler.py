@@ -6,11 +6,24 @@ import logging
 from datetime import datetime, time
 from typing import Optional
 
+import requests
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CommandHandler, CallbackQueryHandler, ContextTypes
 
-from config import INTRADAY_SYMBOLS, MARKET_OPEN_TIME, MARKET_CLOSE_TIME
+from config import (
+    INTRADAY_SYMBOLS, MARKET_OPEN_TIME, MARKET_CLOSE_TIME, TRADINGVIEW_SESSION_ID,
+)
+from database import get_connection
 from intraday_fetcher import fetch_live_snapshot
+
+# TradingView's own fuzzy symbol search (resolves company names → symbols).
+_TV_SEARCH_URL = "https://symbol-search.tradingview.com/symbol_search/"
+_TV_SEARCH_HEADERS = {
+    "accept": "application/json",
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "origin": "https://in.tradingview.com",
+    "referer": "https://in.tradingview.com/",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -64,47 +77,144 @@ _BASE_SYMBOLS = list(INTRADAY_SYMBOLS) + [
     "KAYNES", "LALPATHLAB", "MASTEK",
 ]
 
-# Deduplicate while preserving order
-_seen = set()
-NSE_SYMBOLS = []
-for s in _BASE_SYMBOLS:
-    if s not in _seen:
-        _seen.add(s)
-        NSE_SYMBOLS.append(s)
+def _load_symbol_index() -> list[str]:
+    """
+    Build the searchable symbol index from the live bhavcopy DB
+    (all ~3068 EQ symbols), falling back to the static seed list if the
+    DB is unavailable/empty. Deduped, order-preserved.
+    """
+    index: list[str] = []
+    seen: set[str] = set()
+
+    def _add(symbols) -> None:
+        for s in symbols:
+            s = (s or "").upper().strip()
+            if s and s.isascii() and s not in seen:
+                seen.add(s)
+                index.append(s)
+
+    try:
+        # All EQ-series symbols ever present in the bhavcopy. read-only conn.
+        with get_connection() as conn:
+            db_symbols = [r[0] for r in conn.execute(
+                "SELECT DISTINCT symbol FROM bhavcopy WHERE series = 'EQ'"
+            ).fetchall()]
+    except Exception as exc:  # pragma: no cover - DB hiccup
+        logger.warning("Search index: DB load failed (%s); static list only", exc)
+        db_symbols = []
+
+    _add(db_symbols)
+    _add(_BASE_SYMBOLS)  # ensure static seeds present even if DB is fresh
+    logger.info("Search index built: %d symbols", len(index))
+    return index
+
+
+def get_symbols() -> list[str]:
+    """Lazy-load and cache the symbol index."""
+    global NSE_SYMBOLS
+    if NSE_SYMBOLS is None:
+        NSE_SYMBOLS = _load_symbol_index()
+    return NSE_SYMBOLS
+
+
+NSE_SYMBOLS: list[str] | None = None
 
 
 def fuzzy_search(query: str, limit: int = 10) -> list[tuple[str, int]]:
     """
-    Fuzzy search NSE symbols using rapidfuzz.
-    Returns list of (symbol, score) tuples.
+    Search the full NSE symbol universe with ranking:
+      exact (100) > prefix (95) > substring (90) > fuzzy token_set (70+).
+
+    Returns list of (symbol, int_score) tuples, sorted best-first,
+    deduplicated, capped at `limit`.
     """
     from rapidfuzz import process, fuzz
 
-    query = query.upper().strip()
-    if not query:
+    q = query.upper().strip()
+    if not q:
         return []
 
-    # Try exact prefix match first
-    prefix_matches = [s for s in NSE_SYMBOLS if s.startswith(query)]
-    if prefix_matches:
-        return [(s, 100) for s in prefix_matches[:limit]]
+    universe = get_symbols()
+    scored: dict[str, int] = {}
 
-    # Fuzzy match with rapidfuzz
-    results = process.extract(
-        query,
-        NSE_SYMBOLS,
-        scorer=fuzz.WRatio,
-        limit=limit,
-        score_cutoff=60,
-    )
-    return [(r[0], r[1]) for r in results]
+    # Exact match — immediate
+    if q in universe:
+        return [(q, 100)]
+
+    # Prefix matches (strong)
+    for s in universe:
+        if s.startswith(q) and s not in scored:
+            scored[s] = 95
+
+    # Substring matches (e.g. PPL inside PPLPHARMA)
+    for s in universe:
+        if q in s and s not in scored:
+            scored[s] = 90
+
+    # Fuzzy fallback — catches typos that prefix/substring miss.
+    # token_set_ratio ignores token order/duplication; cutoff 70 avoids
+    # the WRatio 60-cutoff garbage (UPL 60%, RAMRAT 60%).
+    for sym, score, _ in process.extract(
+        q, universe, scorer=fuzz.token_set_ratio,
+        limit=limit * 3, score_cutoff=70,
+    ):
+        if sym not in scored:
+            scored[sym] = int(round(score))
+
+    ranked = sorted(scored.items(), key=lambda kv: (-kv[1], kv[0]))
+    return ranked[:limit]
+
+
+def tv_symbol_lookup(text: str, limit: int = 6) -> list[dict]:
+    """
+    Query TradingView's authoritative symbol search. Resolves company names,
+    partial tickers and typos → canonical NSE symbol + company description.
+
+    Returns list of {symbol, description, exchange}. Empty on any failure -
+    the local fuzzy_search() index is always the fallback.
+    """
+    import re
+
+    text = (text or "").strip()
+    if not text:
+        return []
+    cookies = {"sessionid": TRADINGVIEW_SESSION_ID} if TRADINGVIEW_SESSION_ID else None
+    try:
+        resp = requests.get(
+            _TV_SEARCH_URL,
+            params={
+                "text": text, "hl": "1", "lang": "en",
+                "exchange": "NSE", "type": "stock", "domain": "production",
+            },
+            headers=_TV_SEARCH_HEADERS,
+            cookies=cookies,
+            timeout=8,
+        )
+        resp.raise_for_status()
+        out: list[dict] = []
+        for item in resp.json():
+            # strip <em></em> highlight tags TV wraps around the match
+            sym = re.sub(r"</?em>", "", item.get("symbol", "")).upper().strip()
+            if not sym:
+                continue
+            out.append({
+                "symbol": sym,
+                "description": item.get("description", ""),
+                "exchange": item.get("exchange", "NSE"),
+            })
+            if len(out) >= limit:
+                break
+        return out
+    except Exception as exc:
+        logger.warning("TV symbol lookup failed for %r: %s", text, exc)
+        return []
 
 
 def build_search_keyboard(matches: list[tuple[str, int]], query: str) -> InlineKeyboardMarkup:
     """Build inline keyboard with search results."""
     buttons = []
     for symbol, score in matches:
-        label = f"{symbol} ({score}%)"
+        label = f"{symbol} ({int(round(score))}%)"
         buttons.append([InlineKeyboardButton(label, callback_data=f"search_select|{symbol}")])
 
     buttons.append([InlineKeyboardButton("❌ Cancel", callback_data="search_cancel")])
@@ -113,8 +223,14 @@ def build_search_keyboard(matches: list[tuple[str, int]], query: str) -> InlineK
 
 async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Handle /search <symbol> or /search <name>
-    Fuzzy searches NSE symbols and shows inline keyboard.
+    /search <symbol|company>
+
+    Flow:
+      1. Exact symbol match in the local index → show live detail directly.
+      2. Else ask TradingView's symbol search (resolves company names & typos
+         → canonical symbol). A confident exact hit → live detail directly.
+      3. Else offer candidates (TV candidates first, then local fuzzy) as
+         buttons for the user to pick.
     """
     from bot import _reply
 
@@ -122,32 +238,65 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _reply(update, (
             "🔍 **Search Usage**\n\n"
             "`/search RELIANCE` — exact symbol\n"
+            "`/search piramal` — by company name\n"
             "`/search RELI` — prefix match\n"
-            "`/search reliance` — case-insensitive\n"
-            "`/search oil` — fuzzy match (finds OIL, RELIANCE, etc.)\n\n"
-            "Results shown as buttons. Tap to get live price + full details."
+            "`/search TATAMTR` — fuzzy / typo-tolerant\n\n"
+            "Exact symbol → live detail instantly. Otherwise tap a candidate."
         ))
         return
 
     query = " ".join(context.args).strip()
-    matches = fuzzy_search(query, limit=10)
+    q = query.upper()
 
-    if not matches:
-        await _reply(update, f"🔍 No matches for **'{query}'**. Try a different query.")
+    # 1) Exact symbol in local index → direct detail
+    if q in get_symbols():
+        await send_live_stock_detail(update, q)
         return
 
-    # Exact match — fetch live data directly
-    if len(matches) == 1 and matches[0][1] == 100:
-        symbol = matches[0][0]
-        await send_live_stock_detail(update, symbol)
+    # 2) TradingView authoritative lookup (company names, typos, partials)
+    loop = asyncio.get_running_loop()
+    tv_hits = await loop.run_in_executor(None, tv_symbol_lookup, query)
+    if tv_hits:
+        exact = [h for h in tv_hits if h["symbol"] == q]
+        if exact:
+            await send_live_stock_detail(update, exact[0]["symbol"])
+            return
+
+    # 3) Build picker: TV candidates first (with company names), then local fuzzy
+    candidates: list[str] = []
+    names: dict[str, str] = {}
+    for h in tv_hits:
+        if h["symbol"] not in candidates:
+            candidates.append(h["symbol"])
+            if h.get("description"):
+                names[h["symbol"]] = h["description"]
+    for sym, _score in fuzzy_search(query, limit=6):
+        if sym not in candidates:
+            candidates.append(sym)
+    candidates = candidates[:8]
+
+    if not candidates:
+        await _reply(update, f"🔍 No match for **'{query}'**. Try a symbol or company name.")
         return
 
-    # Multiple matches — show keyboard
-    keyboard = build_search_keyboard(matches, query)
+    keyboard = _build_candidate_keyboard(candidates, names)
     await _reply(update, (
-        f"🔍 **Search Results for '{query}'**\n\n"
-        f"Found {len(matches)} match(es). Tap a symbol for live data:"
+        f"🔍 **'{query}'** — {len(candidates)} match(es). Tap to view live detail:"
     ), reply_markup=keyboard)
+
+
+def _build_candidate_keyboard(
+    candidates: list[str], names: dict[str, str]
+) -> InlineKeyboardMarkup:
+    """Inline keyboard: symbol + company description if available."""
+    buttons = []
+    for sym in candidates:
+        label = f"{sym}"
+        if names.get(sym):
+            label += f" · {names[sym]}"
+        buttons.append([InlineKeyboardButton(label[:64], callback_data=f"search_select|{sym}")])
+    buttons.append([InlineKeyboardButton("❌ Cancel", callback_data="search_cancel")])
+    return InlineKeyboardMarkup(buttons)
 
 
 async def on_search_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -386,6 +535,7 @@ def format_live_detail(symbol: str, data: dict) -> str:
     eps = data.get("earnings_per_share_diluted_ttm")
     div_yield = data.get("dividends_yield_current")
     exchange = data.get("exchange", "NSE")
+    description = data.get("description", "")
 
     # New fields (added in 2026-07-30 /search enrichment)
     chg_from_open = data.get("change_from_open_abs")
@@ -426,7 +576,7 @@ def format_live_detail(symbol: str, data: dict) -> str:
     # Build the body via the helper; the dead-code fallback below is removed.
     lines: list[str] = []
     return _build_detail_body(
-        symbol=symbol, exchange=exchange,
+        symbol=symbol, exchange=exchange, description=description,
         ltp=ltp, chg=chg, chg_pct=chg_pct, vol=vol, high=high, low=low,
         opn=opn, vwap=vwap, rel_vol=rel_vol,
         rsi=rsi, macd=macd, macd_sig=macd_sig,
@@ -446,7 +596,7 @@ def format_live_detail(symbol: str, data: dict) -> str:
 
 def _build_detail_body(
     *,
-    symbol: str, exchange: str,
+    symbol: str, exchange: str, description: str = "",
     ltp, chg, chg_pct, vol, high, low,
     opn, vwap, rel_vol,
     rsi, macd, macd_sig,
@@ -479,6 +629,8 @@ def _build_detail_body(
     chg_str = _fmt_signed(chg)
     pct_str = _fmt_pct(chg_pct)
     lines.append(f"📈 **{symbol}** — {ltp_str} ({exchange})")
+    if description:
+        lines.append(f"_🏢 {description}_")
     lines.append(f"**{trend}** · {chg_str} ({pct_str})")
     if sector or industry:
         lines.append(f"_📂 {sector or '?'} · {industry or '?'}_")
