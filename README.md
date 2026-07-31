@@ -33,7 +33,8 @@ A production-grade Telegram bot that downloads daily NSE BhavCopy data, runs tec
 │                     ┌──────────────────────────────────────────────┐  │
 │                     │           scheduler.py (APScheduler)         │  │
 │                     │  18:30 IST sync  •  08:30 IST report         │  │
-│                     │  09:00 IST pre-market  •  15-min sync retry   │  │
+│                     │  09:00 IST pre-market  •  09:15 cross-check  │  │
+│                     │  15-min sync retry until NSE publishes       │  │
 │                     │  until NSE publishes (until 23:00 IST)        │  │
 │                     └──────────────────────────────────────────────┘  │
 │                                                                         │
@@ -54,6 +55,9 @@ MarketMeterBOT/
 ├── report_generator.py  # Rich Markdown reports: top picks, scan table, collapsible legends, cache
 ├── bot.py               # Telegram handlers, Rich Message delivery (Bot API 10.1+), broadcasting
 ├── scheduler.py         # APScheduler jobs: daily sync, daily report, retry loop
+├── premarket_report.py  # 09:00 pre-market live prices (top 25)
+├── premarket_open_report.py  # 09:15 market-open cross-check (top 15)
+├── premarket_combined_report.py  # Combined historical + live pre-market report
 ├── requirements.txt     # Pinned dependencies
 ├── .env.example         # Environment variable template
 ├── data/
@@ -319,6 +323,8 @@ Processes all 2,959 qualified symbols in batches of 200, writes to `daily_analys
 |-----|---------|------------|----------|
 | `daily_sync` | `cron` daily | 18:30 | `_daily_sync_job` → sync → notify → analysis → warm cache |
 | `daily_report` | `cron` daily | 08:30 | `_daily_report_job` → generate → broadcast → owner confirm |
+| `premarket_report` | `cron` daily | 09:00 | `_premarket_report_job` → live prices → owner only (Mon-Fri) |
+| `open_crosscheck_report` | `cron` daily | 09:15 | `_open_crosscheck_job` → EOD + live merge → owner only (Mon-Fri) |
 | `sync_retry` | `interval` 15 min | dynamic | `_sync_retry_job` → re-sync pending dates → re-arm until 23:00 |
 
 **Retry Logic (Bug #3/#4 fixed):** `_schedule_sync_retry()` arms a one-shot job using an **IST-aware** clock (`datetime.now(IST)`, was naive-host). `_sync_retry_job` now re-arms whenever **`not_available` is non-empty** — even when `total_records > 0` (a partial sync used to kill the retry loop at the first landed date, losing the still-pending ones until the next day's 18:30 run). Stops only at the cutoff hour.
@@ -446,6 +452,18 @@ tail -f logs/bot.log
                 ├─ generate_morning_report() (cache hit: 0.1 ms)
                 ├─ broadcast_to_subscribers() (Rich chunks)
                 └─ notify owner: sent/failed counts
+
+09:00 IST  ──▶ send_premarket_report()
+                ├─ fetch live prices for top 25 symbols (TradingView)
+                ├─ build pre-market table
+                └─ send to owner only
+
+09:15 IST  ──▶ send_open_crosscheck_report()
+                ├─ fetch EOD analysis for top 15 by composite_score
+                ├─ fetch live 09:15 prices (TradingView)
+                ├─ merge EOD + 09:15 data (gap%, live RSI/Vol, call verdict)
+                ├─ build cross-check report with scorecard
+                └─ send to owner only
 ```
 
 ---
@@ -486,6 +504,9 @@ Pinned to tested major versions. `python-telegram-bot[job-queue]` pulls APSchedu
 | Change schedule | `config.py` (`SYNC_TIME`, `REPORT_TIME`) + systemd `Environment=` |
 | Add DB column | `database.py` (`_ANALYSIS_ADDED_COLUMNS` + migration) |
 | Change NSE source | `data_fetcher.py` (`NSE_BHAVCOPY_URL`, `transform_bhavcopy`) |
+| Modify 09:00 pre-market | `premarket_report.py` |
+| Modify 09:15 cross-check | `premarket_open_report.py` |
+| Modify combined pre-market | `premarket_combined_report.py` |
 
 ---
 
