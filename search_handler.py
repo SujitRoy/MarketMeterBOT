@@ -11,9 +11,8 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CommandHandler, CallbackQueryHandler, ContextTypes
 
 from config import (
-    INTRADAY_SYMBOLS, MARKET_OPEN_TIME, MARKET_CLOSE_TIME, TRADINGVIEW_SESSION_ID,
+    MARKET_OPEN_TIME, MARKET_CLOSE_TIME, TRADINGVIEW_SESSION_ID,
 )
-from database import get_connection
 from intraday_fetcher import fetch_live_snapshot
 
 # TradingView's own fuzzy symbol search (resolves company names → symbols).
@@ -27,157 +26,23 @@ _TV_SEARCH_HEADERS = {
 
 logger = logging.getLogger(__name__)
 
-# ─── NSE Symbol List (for fuzzy matching) ───────────────────────────
-# Loaded from config's INTRADAY_SYMBOLS + common NSE stocks
-# ─── NSE Symbol List (for fuzzy matching) ───────────────────────────
-# Loaded from config's INTRADAY_SYMBOLS + common NSE stocks
-# Deduplicated while preserving order
-
-_BASE_SYMBOLS = list(INTRADAY_SYMBOLS) + [
-    # NIFTY 50
-    "RELIANCE", "HDFCBANK", "ICICIBANK", "BHARTIARTL", "TCS",
-    "INFY", "ITC", "SBIN", "LT", "HINDUNILVR",
-    "BAJFINANCE", "KOTAKBANK", "AXISBANK", "MARUTI", "SUNPHARMA",
-    "TITAN", "ULTRACEMCO", "HCLTECH", "BAJAJFINSV", "NTPC",
-    "POWERGRID", "NESTLEIND", "ONGC", "JSWSTEEL", "TECHM",
-    "WIPRO", "ADANIENT", "ADANIPORTS", "COALINDIA", "TATAMOTORS",
-    "TATASTEEL", "ASIANPAINT", "DRREDDY", "CIPLA", "GRASIM",
-    "HINDALCO", "BPCL", "EICHERMOT", "HEROMOTOCO", "BRITANNIA",
-    "DIVISLAB", "SBILIFE", "HDFCLIFE", "UPL", "APOLLOHOSP",
-
-    # NIFTY NEXT 50 + Midcaps
-    "ABB", "ACC", "ADANIGREEN", "ADANIPOWER", "ALKEM",
-    "AMBUJACEM", "AUBANK", "AUROPHARMA", "BALKRISIND", "BANDHANBNK",
-    "BANKBARODA", "BATAINDIA", "BEL", "BERGEPAINT", "BHEL",
-    "BIOCON", "BOSCHLTD", "CANBK", "CANFINHOME", "CHOLAFIN",
-    "COLPAL", "CONCOR", "COROMANDEL", "CROMPTON", "DABUR",
-    "DALBHARAT", "DEEPAKNTR", "DLF", "DMART", "EXIDEIND",
-    "FEDERALBNK", "GAIL", "GLAXO", "GLENMARK", "GMRINFRA",
-    "GODREJCP", "GODREJPROP", "GRANULES", "GUJGASLTD", "HAVELLS",
-    "HINDPETRO", "ICICIGI", "ICICIPRULI", "IDEA", "IDFCFIRSTB",
-    "IGL", "INDIGO", "INDUSINDBK", "INDUSTOWER", "IPCALAB",
-    "JINDALSTEL", "JUBLFOOD", "LAURUSLABS", "LICHSGFIN", "LTIM",
-    "LTFH", "LUPIN", "MANAPPURAM", "MCDOWELL-N", "MFSL",
-    "MGL", "MOTHERSON", "MPHASIS", "MRF", "MUTHOOTFIN",
-    "NAUKRI", "NAVINFLUOR", "NBCC", "NMDC", "OBEROIRLTY",
-    "OFSS", "PAGEIND", "PERSISTENT", "PETRONET", "PFC",
-    "PIDILITIND", "PNB", "POLYCAB", "PRESTIGE", "PVRINOX",
-    "RAMCOCEM", "RBLBANK", "RECLTD", "SAIL", "SBICARD",
-    "SHREECEM", "SIEMENS", "SRF", "SUNDARMFIN", "SUNDRMFAST",
-    "SYNGENE", "TATACHEM", "TATACOMM", "TATACONSUM", "TATAELXSI",
-    "TATAPOWER", "TORNTPHARM", "TORNTPOWER", "TRENT", "TVSMOTOR",
-    "UBL", "UNITDSPR", "VBL", "VEDL", "VOLTAS",
-    "WHIRLPOOL", "WOCKPHARMA", "ZOMATO", "ZYDUSLIFE",
-
-    # Report top picks / smallcaps
-    "ORISSAMINE", "TIPSFILMS", "APCOTEXIND", "ARTEMISMED", "ASAHISONG",
-    "CENTENKA", "CPEDU", "EXPLEOSOL", "OAL", "PARADEEP",
-    "RAMRAT", "DIVISLAB", "RADICO", "MOLDTECH", "ALLDIGI",
-    "NBIFIN", "RPSGVENT", "SAPPHIRE", "SHIVATEX", "BLUESTONE",
-    "KAYNES", "LALPATHLAB", "MASTEK",
-]
-
-def _load_symbol_index() -> list[str]:
-    """
-    Build the searchable symbol index from the live bhavcopy DB
-    (all ~3068 EQ symbols), falling back to the static seed list if the
-    DB is unavailable/empty. Deduped, order-preserved.
-    """
-    index: list[str] = []
-    seen: set[str] = set()
-
-    def _add(symbols) -> None:
-        for s in symbols:
-            s = (s or "").upper().strip()
-            if s and s.isascii() and s not in seen:
-                seen.add(s)
-                index.append(s)
-
-    try:
-        # All EQ-series symbols ever present in the bhavcopy. read-only conn.
-        with get_connection() as conn:
-            db_symbols = [r[0] for r in conn.execute(
-                "SELECT DISTINCT symbol FROM bhavcopy WHERE series = 'EQ'"
-            ).fetchall()]
-    except Exception as exc:  # pragma: no cover - DB hiccup
-        logger.warning("Search index: DB load failed (%s); static list only", exc)
-        db_symbols = []
-
-    _add(db_symbols)
-    _add(_BASE_SYMBOLS)  # ensure static seeds present even if DB is fresh
-    logger.info("Search index built: %d symbols", len(index))
-    return index
-
-
-def get_symbols() -> list[str]:
-    """Lazy-load and cache the symbol index."""
-    global NSE_SYMBOLS
-    if NSE_SYMBOLS is None:
-        NSE_SYMBOLS = _load_symbol_index()
-    return NSE_SYMBOLS
-
-
-NSE_SYMBOLS: list[str] | None = None
-
-
-def fuzzy_search(query: str, limit: int = 10) -> list[tuple[str, int]]:
-    """
-    Search the full NSE symbol universe with ranking:
-      exact (100) > prefix (95) > substring (90) > fuzzy token_set (70+).
-
-    Returns list of (symbol, int_score) tuples, sorted best-first,
-    deduplicated, capped at `limit`.
-    """
-    from rapidfuzz import process, fuzz
-
-    q = query.upper().strip()
-    if not q:
-        return []
-
-    universe = get_symbols()
-    scored: dict[str, int] = {}
-
-    # Exact match — immediate
-    if q in universe:
-        return [(q, 100)]
-
-    # Prefix matches (strong)
-    for s in universe:
-        if s.startswith(q) and s not in scored:
-            scored[s] = 95
-
-    # Substring matches (e.g. PPL inside PPLPHARMA)
-    for s in universe:
-        if q in s and s not in scored:
-            scored[s] = 90
-
-    # Fuzzy fallback — catches typos that prefix/substring miss.
-    # token_set_ratio ignores token order/duplication; cutoff 70 avoids
-    # the WRatio 60-cutoff garbage (UPL 60%, RAMRAT 60%).
-    for sym, score, _ in process.extract(
-        q, universe, scorer=fuzz.token_set_ratio,
-        limit=limit * 3, score_cutoff=70,
-    ):
-        if sym not in scored:
-            scored[sym] = int(round(score))
-
-    ranked = sorted(scored.items(), key=lambda kv: (-kv[1], kv[0]))
-    return ranked[:limit]
-
-
-def tv_symbol_lookup(text: str, limit: int = 6) -> list[dict]:
+def tv_symbol_lookup(text: str, limit: int = 8) -> list[dict]:
     """
     Query TradingView's authoritative symbol search. Resolves company names,
     partial tickers and typos → canonical NSE symbol + company description.
 
-    Returns list of {symbol, description, exchange}. Empty on any failure -
-    the local fuzzy_search() index is always the fallback.
+    Returns list of {symbol, description, exchange}. Empty on any failure.
+
+    TradingView highlights matches with HTML tags in both symbol and
+    description fields (case-varied: <em>, <EM>). We strip ALL <...> tags,
+    not just literal <em>, so <EM>ADANI</EM>PORTS renders as ADANIPORTS.
     """
     import re
 
     text = (text or "").strip()
     if not text:
         return []
+    _TAG = re.compile(r"<[^>]+>")
     cookies = {"sessionid": TRADINGVIEW_SESSION_ID} if TRADINGVIEW_SESSION_ID else None
     try:
         resp = requests.get(
@@ -191,16 +56,32 @@ def tv_symbol_lookup(text: str, limit: int = 6) -> list[dict]:
             timeout=8,
         )
         resp.raise_for_status()
+        try:
+            payload = resp.json()
+        except ValueError as exc:
+            logger.warning("TV lookup %r: JSON parse failed (%s); raw=%r",
+                           text, exc, resp.text[:120])
+            return []
+        items = payload if isinstance(payload, list) else (
+            payload.get("symbols", []) if isinstance(payload, dict) else []
+        )
+
         out: list[dict] = []
-        for item in resp.json():
-            # strip <em></em> highlight tags TV wraps around the match
-            sym = re.sub(r"</?em>", "", item.get("symbol", "")).upper().strip()
-            if not sym:
+        seen: set[str] = set()
+        NON_STOCK = {"fund", "etf", "dr", "warrant", "structured", "index"}
+        for item in items:
+            item_type = str(item.get("type", "")).lower()
+            if item_type in NON_STOCK:
                 continue
+            sym = _TAG.sub("", str(item.get("symbol", ""))).split(":")[-1].upper().strip()
+            if not sym or not sym.isascii() or len(sym) > 20 or sym in seen:
+                continue
+            seen.add(sym)
             out.append({
                 "symbol": sym,
-                "description": item.get("description", ""),
+                "description": _TAG.sub("", str(item.get("description", ""))).strip(),
                 "exchange": item.get("exchange", "NSE"),
+                "type": item_type,
             })
             if len(out) >= limit:
                 break
@@ -225,12 +106,15 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /search <symbol|company>
 
+    TradingView is the SOLE source of truth. We never fuzzy-search our local
+    DB - TV has the full NSE universe with company descriptions and is fast
+    enough (~300ms per call) to be the only path.
+
     Flow:
-      1. Exact symbol match in the local index → show live detail directly.
-      2. Else ask TradingView's symbol search (resolves company names & typos
-         → canonical symbol). A confident exact hit → live detail directly.
-      3. Else offer candidates (TV candidates first, then local fuzzy) as
-         buttons for the user to pick.
+      1. Query TV symbol-search.
+      2. If a result matches the query exactly → show live detail directly.
+      3. Else show the TV candidates as a picker (with company descriptions).
+      4. If TV returns nothing → tell the user we couldn't find a match.
     """
     from bot import _reply
 
@@ -239,7 +123,7 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🔍 **Search Usage**\n\n"
             "`/search RELIANCE` — exact symbol\n"
             "`/search piramal` — by company name\n"
-            "`/search RELI` — prefix match\n"
+            "`/search adani` — group of symbols\n"
             "`/search TATAMTR` — fuzzy / typo-tolerant\n\n"
             "Exact symbol → live detail instantly. Otherwise tap a candidate."
         ))
@@ -248,38 +132,30 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = " ".join(context.args).strip()
     q = query.upper()
 
-    # 1) Exact symbol in local index → direct detail
-    if q in get_symbols():
-        await send_live_stock_detail(update, q)
-        return
-
-    # 2) TradingView authoritative lookup (company names, typos, partials)
     loop = asyncio.get_running_loop()
     tv_hits = await loop.run_in_executor(None, tv_symbol_lookup, query)
-    if tv_hits:
-        exact = [h for h in tv_hits if h["symbol"] == q]
-        if exact:
-            await send_live_stock_detail(update, exact[0]["symbol"])
-            return
 
-    # 3) Build picker: TV candidates first (with company names), then local fuzzy
-    candidates: list[str] = []
-    names: dict[str, str] = {}
-    for h in tv_hits:
-        if h["symbol"] not in candidates:
-            candidates.append(h["symbol"])
-            if h.get("description"):
-                names[h["symbol"]] = h["description"]
-    for sym, _score in fuzzy_search(query, limit=6):
-        if sym not in candidates:
-            candidates.append(sym)
-    candidates = candidates[:8]
-
-    if not candidates:
-        await _reply(update, f"🔍 No match for **'{query}'**. Try a symbol or company name.")
+    # No TV hits → nothing matches
+    if not tv_hits:
+        await _reply(update, f"🔍 No match for **'{query}'**. Try a different symbol or company name.")
         return
 
-    keyboard = _build_candidate_keyboard(candidates, names)
+    # Single confident TV hit → skip the picker, show live detail directly
+    if len(tv_hits) == 1:
+        await send_live_stock_detail(update, tv_hits[0]["symbol"])
+        return
+
+    # Exact symbol match among multiple TV hits → direct detail
+    exact = [h for h in tv_hits if h["symbol"] == q]
+    if exact:
+        await send_live_stock_detail(update, exact[0]["symbol"])
+        return
+
+    # Picker: TV candidates with descriptions
+    candidates = tv_hits[:10]
+    names = {h["symbol"]: h["description"] for h in candidates if h.get("description")}
+    syms = [h["symbol"] for h in candidates]
+    keyboard = _build_candidate_keyboard(syms, names)
     await _reply(update, (
         f"🔍 **'{query}'** — {len(candidates)} match(es). Tap to view live detail:"
     ), reply_markup=keyboard)
@@ -555,6 +431,8 @@ def format_live_detail(symbol: str, data: dict) -> str:
     bb_basis = data.get("BB.basis")
     high_52w = data.get("high_52w")
     low_52w = data.get("low_52w")
+    all_time_high = data.get("all_time_high")
+    all_time_low = data.get("all_time_low")
     gross_m = data.get("gross_margin_ttm")
     net_m = data.get("net_margin_ttm")
     sector = data.get("sector")
@@ -585,6 +463,7 @@ def format_live_detail(symbol: str, data: dict) -> str:
         ema9=ema9, ema21=ema21, ema50=ema50, ema200=ema200,
         sma20=sma20, sma50=sma50, sma200=sma200,
         high_52w=high_52w, low_52w=low_52w,
+        all_time_high=all_time_high, all_time_low=all_time_low,
         mcap=mcap, pe=pe, eps=eps, div_yield=div_yield,
         gross_m=gross_m, net_m=net_m,
         sector=sector, industry=industry,
@@ -605,6 +484,7 @@ def _build_detail_body(
     ema9, ema21, ema50, ema200,
     sma20, sma50, sma200,
     high_52w, low_52w,
+    all_time_high, all_time_low,
     mcap, pe, eps, div_yield,
     gross_m, net_m,
     sector, industry,
@@ -764,6 +644,26 @@ def _build_detail_body(
         if _has(low_52w) and _has(ltp) and low_52w > 0:
             dist_low = (ltp / low_52w - 1) * 100
             lines.append(f"| **Distance from 52w Low** | {dist_low:+.1f}% |")
+        lines.append("")
+
+    # ── All-Time Position ─────────────────────────────────────
+    # TV columns 'all_time_high' / 'all_time_low' were already fetched by
+    # intraday_fetcher.build_query; render them here so the wider lifetime
+    # range survives in the chat (e.g. INDORAMA: ₹8.25 – ₹109.70, LTP at
+    # ~47% of band). Hidden entirely when both are missing — no "—" rows.
+    if _has(all_time_high) or _has(all_time_low):
+        lines.append("**📈 All-Time Position**")
+        lines.append("")
+        lines.append("| Metric | Value |")
+        lines.append("|:-------|------:|")
+        if _has(all_time_high) and _has(all_time_low):
+            lines.append(f"| **All-Time Range** | {_fmt_price(all_time_low)} – {_fmt_price(all_time_high)} |")
+        if _has(all_time_high) and _has(ltp) and all_time_high > 0:
+            dist_high = (ltp / all_time_high - 1) * 100
+            lines.append(f"| **Distance from ATH** | {dist_high:+.1f}% |")
+        if _has(all_time_low) and _has(ltp) and all_time_low > 0:
+            dist_low = (ltp / all_time_low - 1) * 100
+            lines.append(f"| **Distance from ATL** | {dist_low:+.1f}% |")
         lines.append("")
 
     # ── Fundamentals ──────────────────────────────────────────
