@@ -81,7 +81,7 @@ LONG_INDICATOR_MIN_DAYS = 200
 # ── Report Cache ────────────────────────────────────────────────────
 # Bump REPORT_CACHE_VERSION whenever report layout changes, to invalidate
 # every previously rendered payload without touching the table.
-REPORT_CACHE_VERSION = 3
+REPORT_CACHE_VERSION = 4
 REPORT_CACHE_RETAIN_DAYS = 7
 
 # ── Message Chunking ──────────────────────────────────────────────
@@ -121,6 +121,8 @@ NSE_HTTP_TIMEOUT = 30
 # current date before this only ever yields a 404 that gets logged as a failed
 # sync: on 2026-07-29 a 09:21 run marked the date not_available and no retry
 # followed. Today's date is skipped until this hour.
+# NOTE: closed-day classification lives in data_fetcher.NSE_HOLIDAYS / is_trading_day,
+# so a weekday exchange holiday is 'holiday' (skipped), never a retryable 'failed'.
 MARKET_CLOSE_HOUR = 16
 
 # ── Sync Retry ─────────────────────────────────────────────────

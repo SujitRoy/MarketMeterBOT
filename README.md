@@ -1,6 +1,8 @@
 # MarketMeterBOT — NSE Stock Analysis Telegram Bot
 
-A production-grade Telegram bot that downloads daily NSE BhavCopy data, runs technical analysis on 2,900+ stocks, and delivers curated morning reports with BUY/WATCH/AVOID signals.
+A production-grade Telegram bot that downloads daily NSE BhavCopy data, runs technical analysis on 3,066 tracked symbols (~2,900 with enough history), and delivers curated morning reports with BUY/WATCH/AVOID signals.
+
+> **Current state (verified 2026-07-30):** pipeline live — BhavCopy synced through `2026-07-30`, 2.32 M rows, 5 active subscribers, report cache warm (`v3`).
 
 ---
 
@@ -31,7 +33,8 @@ A production-grade Telegram bot that downloads daily NSE BhavCopy data, runs tec
 │                     ┌──────────────────────────────────────────────┐  │
 │                     │           scheduler.py (APScheduler)         │  │
 │                     │  18:30 IST sync  •  08:30 IST report         │  │
-│                     │  15-min retry until NSE publishes (until 23:00)│  │
+│                     │  09:00 IST pre-market  •  15-min sync retry   │  │
+│                     │  until NSE publishes (until 23:00 IST)        │  │
 │                     └──────────────────────────────────────────────┘  │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -54,7 +57,7 @@ MarketMeterBOT/
 ├── requirements.txt     # Pinned dependencies
 ├── .env.example         # Environment variable template
 ├── data/
-│   ├── marketmeter.db   # Main SQLite database (~620 MB, 2.3M rows)
+│   ├── marketmeter.db   # Main SQLite database (~1.0 GB, 2.3M rows)
 │   └── marketmeter.lock # Single-instance advisory lock
 ├── logs/
 │   └── bot.log          # Rotating log (5 MB × 3 backups)
@@ -104,7 +107,7 @@ MARKET_CLOSE_HOUR = 16                  # Skip today's date before this hour
 | `sync_log` | 264 | Per-date sync status | `trade_date` UNIQUE |
 | `report_cache` | 1 | Rendered Rich Markdown payloads | `PRIMARY KEY (kind, analysis_date, version)` — `WITHOUT ROWID` |
 | `stats_cache` | 5 | Aggregated counts (avoids COUNT(*)) | `key` PRIMARY KEY |
-| `subscribers` | 1 | Telegram chat_ids | `chat_id` PRIMARY KEY |
+| `subscribers` | 5 | Telegram chat_ids | `chat_id` PRIMARY KEY |
 
 ### `bhavcopy` Schema
 ```sql
@@ -307,7 +310,7 @@ Processes all 2,959 qualified symbols in batches of 200, writes to `daily_analys
 
 **Broadcast** (`broadcast_to_subscribers`):
 - Iterates active subscribers
-- Handles `Forbidden` (blocks bot) → deactivates subscriber
+- Handles `Forbidden` (blocks bot) → **skips only; does NOT deactivate** (only explicit `/unsubscribe` stops reports)
 - Rate-limits: 25 msg → 1 s pause
 
 ### `scheduler.py` — APScheduler Jobs
@@ -318,7 +321,9 @@ Processes all 2,959 qualified symbols in batches of 200, writes to `daily_analys
 | `daily_report` | `cron` daily | 08:30 | `_daily_report_job` → generate → broadcast → owner confirm |
 | `sync_retry` | `interval` 15 min | dynamic | `_sync_retry_job` → re-sync pending dates → re-arm until 23:00 |
 
-**Retry Logic**: `_schedule_sync_retry()` arms a one-shot job; `_sync_retry_job` re-arms itself on `not_available` until cutoff hour.
+**Retry Logic (Bug #3/#4 fixed):** `_schedule_sync_retry()` arms a one-shot job using an **IST-aware** clock (`datetime.now(IST)`, was naive-host). `_sync_retry_job` now re-arms whenever **`not_available` is non-empty** — even when `total_records > 0` (a partial sync used to kill the retry loop at the first landed date, losing the still-pending ones until the next day's 18:30 run). Stops only at the cutoff hour.
+
+> ⚠️ **Holiday classification (Bug #1 fixed):** weekday NSE holidays (Republic Day, Gandhi Jayanti, etc.) are recognised up-front via `data_fetcher.NSE_HOLIDAYS` and logged `holiday`, no longer misclassified `not_available` (which made them immortal retry dates).
 
 ---
 
@@ -326,15 +331,15 @@ Processes all 2,959 qualified symbols in batches of 200, writes to `daily_analys
 
 | Query | Index Used | Time |
 |-------|------------|------|
-| `get_stock_history` (full) | `idx_bhavcopy_cover` (covering) | 68 ms |
-| `get_stock_history` (260-day window) | `idx_bhavcopy_cover` + LIMIT | 1.3 ms |
+| `get_stock_history` (full) | `idx_bhavcopy_symbol_date` (real) | 68 ms |
+| `get_stock_history` (260-day window) | `idx_bhavcopy_symbol_date` + LIMIT | 1.3 ms |
 | `get_latest_analysis` | `idx_analysis_date` | 300 ms |
 | `report_cache` lookup | PK `(kind, date, version)` | 0.1 ms |
 | `stats_cache` lookup | PK `key` | 0.2 ms |
 | `get_all_symbols` (GROUP BY) | `idx_bhavcopy_symbol_date` | 4.2 s (cached after first run) |
 
 **Optimization Notes**:
-- `idx_bhavcopy_cover` is a **covering index**: `(symbol, trade_date, close, high, low, volume, avg_price, value_lakh)` — analyzer queries never touch the heap.
+- **Covering-index fix (Bug #7):** analyzer `get_stock_history` reads `close/high/low/volume/value_lakh/avg_price` scoped by `(symbol, trade_date>=)`. With only `idx_bhavcopy_symbol_date` `(symbol, trade_date)` this measured **~1 s per symbol** (heap-fetch per row → ~50 min for 3,066 symbols). `database.py` now defines **`idx_bhavcopy_cover` `(symbol, trade_date, close, high, low, volume, value_lakh, avg_price)`** (created via `CREATE INDEX IF NOT EXISTS` at startup). On the 1 GB live DB this is a one-time ~1-2 min `CREATE INDEX` run — **an owner's operational step** (`python main.py` restart or manual), done outside market/cron windows. After it exists, the hot path is index-only.
 - `stats_cache` avoids `COUNT(*)` on 2.3M rows (23 s each). Updated arithmetically on insert.
 - `report_cache` turns 1.1 s render into 0.1 ms read.
 - `ANALYSIS_WINDOW_DAYS = None` ensures EMA-200 converges exactly (tested: 17% error with 260-row window).

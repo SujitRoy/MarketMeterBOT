@@ -472,3 +472,65 @@ def get_market_outlook(analysis_date: Optional[date] = None) -> dict:
         'avg_adx': avg_adx,
         'total_stocks': total,
     }
+
+
+def get_analysis_aggregate(analysis_date: Optional[date] = None) -> tuple[dict, dict]:
+    """
+    Single-pass: read the analysis rows ONCE and return (grouped, outlook).
+
+    The report previously fetched the same rows twice — once grouped by
+    recommendation, once for the market outlook. Here we read them once and
+    derive both shapes in memory. Outlook values are computed to be identical
+    to get_market_outlook() so the render is byte-for-byte unchanged.
+    """
+    from database import get_latest_analysis
+
+    results = get_latest_analysis(analysis_date)
+
+    grouped: dict[str, list[dict]] = {
+        "STRONG_BUY": [], "BUY": [], "ACCUMULATE": [],
+        "WATCH": [], "CAUTION": [], "AVOID": []
+    }
+    for r in results:
+        rec = r.get('recommendation', 'AVOID')
+        if rec in grouped:
+            grouped[rec].append(r)
+
+    if not results:
+        outlook = {
+            'outlook': 'N/A', 'bullish_pct': 0, 'bearish_pct': 0,
+            'avg_rsi': None, 'avg_adx': None, 'total_stocks': 0,
+        }
+        return grouped, outlook
+
+    total = len(results)
+    bullish = sum(len(grouped[k]) for k in ('STRONG_BUY', 'BUY', 'ACCUMULATE'))
+    bearish = sum(len(grouped[k]) for k in ('CAUTION', 'AVOID'))
+    bullish_pct = round(bullish / total * 100, 1) if total > 0 else 0
+    bearish_pct = round(bearish / total * 100, 1) if total > 0 else 0
+
+    # Mirror get_market_outlook: mean over the (non-null) rsi_14 / adx_14 values.
+    rsi_vals = [r['rsi_14'] for r in results if r.get('rsi_14') is not None]
+    adx_vals = [r['adx_14'] for r in results if r.get('adx_14') is not None]
+    avg_rsi = round(sum(rsi_vals) / len(rsi_vals), 1) if rsi_vals else None
+    avg_adx = round(sum(adx_vals) / len(adx_vals), 1) if adx_vals else None
+
+    if bullish_pct > 60:
+        outlook_lbl = 'Bullish 📈'
+    elif bullish_pct > 40:
+        outlook_lbl = 'Neutral ↔️'
+    elif bearish_pct > 50:
+        outlook_lbl = 'Bearish 📉'
+    else:
+        outlook_lbl = 'Mixed 🔀'
+
+    outlook = {
+        'outlook': outlook_lbl,
+        'bullish_pct': bullish_pct,
+        'bearish_pct': bearish_pct,
+        'neutral_pct': round(100 - bullish_pct - bearish_pct, 1),
+        'avg_rsi': avg_rsi,
+        'avg_adx': avg_adx,
+        'total_stocks': total,
+    }
+    return grouped, outlook
