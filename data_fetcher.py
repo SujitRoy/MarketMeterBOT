@@ -34,6 +34,10 @@ from database import (
 logger = logging.getLogger(__name__)
 
 
+# BhavcopyNotPublished stays defined here for Phase 1. Phase 3 of the modular
+# refactor will move it to marketmeter.core.errors and replace this definition
+# with a back-compat alias. New code should prefer the marketmeter.core.errors
+# version (same class, same exception identity once Phase 3 lands).
 class BhavcopyNotPublished(Exception):
     """NSE returned 404: the file does not exist yet (or the date is a holiday)."""
 

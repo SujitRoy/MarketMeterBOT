@@ -302,8 +302,8 @@ Source of truth for what each file does today. Used during refactor to make sure
 
 | Phase | Status | Commit | Notes |
 |---|---|---|---|
-| 0 — baseline + this doc | 🟡 in progress | (this commit) | |
-| 1 — skeleton + core/ | ⏸ pending | — | |
+| 0 — baseline + this doc | ✅ done | `f194926` | docs/REFACTOR_PLAN.md pinned |
+| 1 — skeleton + core/ | ✅ done | (this commit) | scaffold + 6 core modules; old code unchanged |
 | 2 — db/ split | ⏸ pending | — | |
 | 3 — sources/ split | ⏸ pending | — | |
 | 4 — analysis/ + reports/ split | ⏸ pending | — | |
