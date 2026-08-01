@@ -14,81 +14,16 @@ from config import (
     MARKET_OPEN_TIME, MARKET_CLOSE_TIME, TRADINGVIEW_SESSION_ID,
 )
 from intraday_fetcher import fetch_live_snapshot
+from marketmeter.sources.tradingview import tv_symbol_lookup  # noqa: F401  (re-export for callers)
 
 # TradingView's own fuzzy symbol search (resolves company names → symbols).
-_TV_SEARCH_URL = "https://symbol-search.tradingview.com/symbol_search/"
-_TV_SEARCH_HEADERS = {
-    "accept": "application/json",
-    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "origin": "https://in.tradingview.com",
-    "referer": "https://in.tradingview.com/",
-}
+# Phase 3 of the modular refactor moved the canonical implementation to
+# marketmeter.sources.tradingview.tv_symbol_lookup. This module imports it
+# above and the /search handlers call it directly; the duplicate free function
+# here was retired. Phase 5 (telegram/ split) will move the handler itself
+# to marketmeter/telegram/search/, where tv_symbol_lookup lives one import away.
 
 logger = logging.getLogger(__name__)
-
-def tv_symbol_lookup(text: str, limit: int = 8) -> list[dict]:
-    """
-    Query TradingView's authoritative symbol search. Resolves company names,
-    partial tickers and typos → canonical NSE symbol + company description.
-
-    Returns list of {symbol, description, exchange}. Empty on any failure.
-
-    TradingView highlights matches with HTML tags in both symbol and
-    description fields (case-varied: <em>, <EM>). We strip ALL <...> tags,
-    not just literal <em>, so <EM>ADANI</EM>PORTS renders as ADANIPORTS.
-    """
-    import re
-
-    text = (text or "").strip()
-    if not text:
-        return []
-    _TAG = re.compile(r"<[^>]+>")
-    cookies = {"sessionid": TRADINGVIEW_SESSION_ID} if TRADINGVIEW_SESSION_ID else None
-    try:
-        resp = requests.get(
-            _TV_SEARCH_URL,
-            params={
-                "text": text, "hl": "1", "lang": "en",
-                "exchange": "NSE", "type": "stock", "domain": "production",
-            },
-            headers=_TV_SEARCH_HEADERS,
-            cookies=cookies,
-            timeout=8,
-        )
-        resp.raise_for_status()
-        try:
-            payload = resp.json()
-        except ValueError as exc:
-            logger.warning("TV lookup %r: JSON parse failed (%s); raw=%r",
-                           text, exc, resp.text[:120])
-            return []
-        items = payload if isinstance(payload, list) else (
-            payload.get("symbols", []) if isinstance(payload, dict) else []
-        )
-
-        out: list[dict] = []
-        seen: set[str] = set()
-        NON_STOCK = {"fund", "etf", "dr", "warrant", "structured", "index"}
-        for item in items:
-            item_type = str(item.get("type", "")).lower()
-            if item_type in NON_STOCK:
-                continue
-            sym = _TAG.sub("", str(item.get("symbol", ""))).split(":")[-1].upper().strip()
-            if not sym or not sym.isascii() or len(sym) > 20 or sym in seen:
-                continue
-            seen.add(sym)
-            out.append({
-                "symbol": sym,
-                "description": _TAG.sub("", str(item.get("description", ""))).strip(),
-                "exchange": item.get("exchange", "NSE"),
-                "type": item_type,
-            })
-            if len(out) >= limit:
-                break
-        return out
-    except Exception as exc:
-        logger.warning("TV symbol lookup failed for %r: %s", text, exc)
-        return []
 
 
 def build_search_keyboard(matches: list[tuple[str, int]], query: str) -> InlineKeyboardMarkup:

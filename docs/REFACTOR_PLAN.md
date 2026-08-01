@@ -304,8 +304,8 @@ Source of truth for what each file does today. Used during refactor to make sure
 |---|---|---|---|
 | 0 — baseline + this doc | ✅ done | `f194926` | docs/REFACTOR_PLAN.md pinned |
 | 1 — skeleton + core/ | ✅ done | `55c1446` | scaffold + 6 core modules; old code unchanged |
-| 2 — db/ split | ✅ done | (this commit) | 8 db repos + shim; byte-equal SHA256 verified |
-| 3 — sources/ split | ⏸ pending | — | |
+| 2 — db/ split | ✅ done | `039d8ef` | 8 db repos + shim; byte-equal SHA256 verified |
+| 3 — sources/ split | ✅ done | (this commit) | NSE + TradingView isolation; Provider Protocol introduced |
 | 4 — analysis/ + reports/ split | ⏸ pending | — | |
 | 5 — telegram/ split | ⏸ pending | — | |
 | 6 — scheduler/ + cli/ + tests reorg | ⏸ pending | — | |
