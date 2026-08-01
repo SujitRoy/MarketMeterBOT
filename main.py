@@ -21,6 +21,12 @@ import sys
 from datetime import date
 from pathlib import Path
 
+# Phase 2: ensure src/ is on sys.path so `from marketmeter.X import Y` resolves
+# whether the operator ran `python main.py` or `pip install -e .`. Idempotent.
+_SRC = Path(__file__).resolve().parent / "src"
+if _SRC.is_dir() and str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
 from config import LOG_FILE, LOG_FORMAT, LOG_LEVEL, OWNER_CHAT_ID, LOG_MAX_BYTES, LOG_BACKUP_COUNT, DATA_DIR
 from database import init_db, get_db_stats
 from bot import create_application, send_to_owner

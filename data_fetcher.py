@@ -43,52 +43,23 @@ class BhavcopyNotPublished(Exception):
 
 
 # ── Trading Calendar ────────────────────────────────────────────────
-
-# NSE trading holidays (CM segment), kept as iso-strings so the "does NSE
-# publish today?" decision is data-driven and never reaches the network on a
-# known closed day. Without this, a closed Monday/Friday was downloaded,
-# 404'd, then misclassified 'not_available' and retried forever.
-# Populate one rolling year ahead; covers 2024-2026 sync window.
-NSE_HOLIDAYS = {
-    # 2024
-    "2024-01-26", "2024-03-08", "2024-03-25", "2024-03-29", "2024-04-11",
-    "2024-04-17", "2024-04-21", "2024-05-23", "2024-06-17", "2024-07-17",
-    "2024-08-15", "2024-10-02", "2024-11-01", "2024-11-15", "2024-12-25",
-    # 2025
-    "2025-01-26", "2025-02-26", "2025-03-14", "2025-03-31", "2025-04-10",
-    "2025-04-18", "2025-05-01", "2025-08-15", "2025-10-01", "2025-10-02",
-    "2025-10-21", "2025-10-22", "2025-11-05", "2025-12-25",
-    # 2026 (extend each year; a date not listed falls back to the 404 path)
-    "2026-01-26", "2026-02-17", "2026-03-10", "2026-03-20", "2026-03-31",
-    "2026-04-02", "2026-04-13", "2026-05-01", "2026-06-26", "2026-08-15",
-    "2026-09-14", "2026-10-02", "2026-10-20", "2026-11-09", "2026-12-25",
-}
-
-
-def is_nse_holiday(d: date) -> bool:
-    """True when NSE is closed and publishes no BhavCopy that day."""
-    return d.weekday() >= 5 or d.isoformat() in NSE_HOLIDAYS
-
-
-def is_trading_day(d: date) -> bool:
-    """Check if a date is an NSE trading day (weekday and not a holiday)."""
-    return not is_nse_holiday(d)
-
-
-def is_weekend_or_holiday(d: date) -> bool:
-    """True for weekends and NSE holidays (both closed)."""
-    return is_nse_holiday(d)
-
-
-def get_trading_days(start_date: date, end_date: date) -> list[date]:
-    """Get list of all weekdays between start and end (inclusive)."""
-    current = start_date
-    trading_days = []
-    while current <= end_date:
-        if is_trading_day(current):
-            trading_days.append(current)
-        current += dt.timedelta(days=1)
-    return trading_days
+#
+# Phase 2 of the modular refactor moved NSE_HOLIDAYS + is_trading_day /
+# is_nse_holiday / is_weekend_or_holiday / get_trading_days to
+# marketmeter.core.time as the canonical home. This file used to be a leaf
+# module but the trading calendar is genuinely cross-cutting infra, not a
+# data-fetcher concern. We re-import from marketmeter.core.time here so any
+# caller that did `from data_fetcher import NSE_HOLIDAYS` keeps working
+# (the symbol resolves to the same object). Phase 6 retires the re-export.
+#
+# PYTHONPATH must include src/ for this to import. main.py adds it on import.
+from marketmeter.core.time import (  # noqa: E402, F401  (re-export)
+    NSE_HOLIDAYS,
+    is_nse_holiday,
+    is_trading_day,
+    is_weekend_or_holiday,
+    get_trading_days,
+)
 
 
 def classify_sync_status(trade_date: date, message: str) -> str:
