@@ -100,8 +100,13 @@ def ist_hour_minute() -> tuple[int, int]:
 
 
 def parse_ist_time(time_str: str) -> dt.time:
-    """Parse 'HH:MM' into a datetime.time. Used by scheduler job registration."""
-    return datetime.strptime(time_str, "%H:%M").time()
+    """Parse 'HH:MM' into an IST-aware datetime.time.
+
+    Returning a tz-aware time is what tells PTB's JobQueue to fire at that
+    wall-clock hour in IST rather than in UTC (the scheduler's default).
+    """
+    t = datetime.strptime(time_str, "%H:%M").time()
+    return t.replace(tzinfo=IST)
 
 
 def is_market_open_now() -> bool:
