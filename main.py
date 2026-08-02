@@ -10,6 +10,7 @@ Usage:
     python main.py --backfill       # Run full historical backfill
     python main.py --report         # Generate and broadcast report once
     python main.py --analyze        # Run analysis only
+    python main.py --status         # Show database status
 """
 import argparse
 import asyncio
@@ -27,10 +28,13 @@ _SRC = Path(__file__).resolve().parent / "src"
 if _SRC.is_dir() and str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from config import LOG_FILE, LOG_FORMAT, LOG_LEVEL, OWNER_CHAT_ID, LOG_MAX_BYTES, LOG_BACKUP_COUNT, DATA_DIR
-from database import init_db, get_db_stats
-from bot import create_application, send_to_owner
-from scheduler import setup_scheduled_jobs
+from marketmeter.core.config import LOG_FILE, LOG_FORMAT, LOG_LEVEL, OWNER_CHAT_ID, LOG_MAX_BYTES, LOG_BACKUP_COUNT, DATA_DIR
+from marketmeter.db import init_db, get_db_stats
+from marketmeter.telegram import create_application, send_to_owner
+from marketmeter.scheduler import setup_scheduled_jobs
+from marketmeter.cli import (
+    cmd_sync, cmd_backfill, cmd_report, cmd_analyze, cmd_status,
+)
 
 # ── Single-instance Lock ────────────────────────────────────────────
 # Referenced by main() but never defined, so every start raised
@@ -48,7 +52,7 @@ def _acquire_lock():
     try:
         fd = os.open(str(LOCK_FILE), os.O_RDWR | os.O_CREAT, 0o644)
     except OSError as e:
-        logger.error(
+        logging.getLogger("MarketMeter").error(
             "Cannot open lock file %s: %s. Verify the data directory is writable "
             "(systemd ProtectHome/ProtectSystem can make it read-only).",
             LOCK_FILE, e,
@@ -69,9 +73,12 @@ def _acquire_lock():
 
     return fd
 
+
 # ── Logging Setup ───────────────────────────────────────────────────
 
 from logging.handlers import RotatingFileHandler
+
+from marketmeter.core.config import LOG_FILE, LOG_FORMAT, LOG_LEVEL, LOG_MAX_BYTES, LOG_BACKUP_COUNT
 
 # Rotating file handler owns the log file. The systemd unit deliberately does
 # NOT redirect stdout here as well: doing both wrote every line twice and let
@@ -97,73 +104,6 @@ logging.getLogger("telegram").setLevel(logging.WARNING)
 logging.getLogger("nsefin").setLevel(logging.WARNING)
 
 
-# ── CLI Commands ────────────────────────────────────────────────────
-
-async def cmd_sync():
-    """Run incremental sync once."""
-    from data_fetcher import sync_incremental_data
-    from report_generator import generate_sync_status_message
-
-    logger.info("Running one-time sync...")
-    result = sync_incremental_data()
-    msg = generate_sync_status_message(result)
-    print(msg)
-
-    # If new data, run analysis
-    if result['status'] == 'completed' and result['total_records'] > 0:
-        logger.info("Running analysis on new data...")
-        from analyzer import run_batch_analysis
-        analysis_result = run_batch_analysis()
-        print(f"Analysis: {analysis_result['message']}")
-
-
-async def cmd_backfill():
-    """Run full historical backfill."""
-    from data_fetcher import backfill_historical_data
-
-    logger.info("Starting full historical backfill...")
-    print("This will download data from 2021-04-01 to today.")
-    print("Estimated time: 20-30 minutes for ~1100 trading days.")
-    response = input("Continue? (y/n): ").strip().lower()
-
-    if response != 'y':
-        print("Aborted.")
-        return
-
-    result = backfill_historical_data()
-    print(f"\nBackfill complete: {result['message']}")
-
-    # Run analysis after backfill
-    logger.info("Running initial analysis...")
-    from analyzer import run_batch_analysis
-    analysis_result = run_batch_analysis()
-    print(f"Analysis: {analysis_result['message']}")
-
-
-async def cmd_report():
-    """Generate and print report once."""
-    from report_generator import generate_morning_report
-    report = generate_morning_report()
-    print(report)
-
-
-async def cmd_analyze():
-    """Run analysis only."""
-    from analyzer import run_batch_analysis
-    result = run_batch_analysis()
-    print(result['message'])
-
-
-async def cmd_status():
-    """Print database status."""
-    stats = get_db_stats()
-    print("=" * 50)
-    print("MarketMeter Database Status")
-    print("=" * 50)
-    for key, value in stats.items():
-        print(f"  {key}: {value}")
-
-
 # ── Main Bot Runner ─────────────────────────────────────────────────
 
 async def run_bot():
@@ -180,7 +120,7 @@ async def run_bot():
 
     # Initialize bot first
     await app.initialize()
-    
+
     # Set menu button (≡) with commands list
     from telegram import MenuButtonCommands
     try:
@@ -197,6 +137,7 @@ async def run_bot():
                 stats['total_records'], stats['unique_symbols'], stats['active_subscribers'])
 
     # Send startup notification to owner (now bot is initialized)
+    from marketmeter.telegram import send_to_owner
     await send_to_owner(app, (
         f"🟢 *MarketMeter Started*\n"
         f"• Records: {stats['total_records']:,}\n"
@@ -231,6 +172,7 @@ async def run_bot():
 
     # Graceful shutdown
     logger.info("Shutting down...")
+    from marketmeter.telegram import send_to_owner
     await send_to_owner(app, "🔴 *MarketMeter Stopped*")
 
     polling_task.cancel()
