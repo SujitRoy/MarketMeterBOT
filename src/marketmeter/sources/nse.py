@@ -105,17 +105,25 @@ def fetch_bhavcopy_csv(trade_date: date, session: Optional[requests.Session] = N
             "NSE may have changed the archive format; check the CSV manually."
         )
     df['SERIES'] = df['SERIES'].astype(str).str.strip()
-    return df[df['SERIES'] == 'EQ'].copy()
+    # Keep all tradeable series (EQ, BE, etc.). A symbol can migrate between
+    # series (e.g. EQ -> BE); excluding BE left converted stocks with stale
+    # data and blank AvgPrice in the report. Duplicates are resolved before
+    # insert by preferring EQ, then BE, then any other series.
+    return df.copy()
+
+
+# Priority order for resolving a symbol that appears in multiple series on the
+# same trading day. EQ (regular equity) is preferred, then BE (trade-to-trade),
+# then everything else.
+_SERIES_PRIORITY = {"EQ": 0, "BE": 1}
 
 
 def transform_bhavcopy(df: pd.DataFrame, trade_date: date) -> pd.DataFrame:
     """
     Map the NSE CSV columns onto our schema.
 
-    Expects the stripped, EQ-filtered frame from fetch_bhavcopy_csv. avg_price
-    comes straight from NSE's AVG_PRICE column, which is the exchange's own
-    per-day average traded price -- more authoritative than deriving
-    turnover/volume ourselves.
+    Accepts the full CSV (all series). avg_price comes straight from NSE's
+    AVG_PRICE column; if that is missing/empty we fall back to turnover/volume.
     """
     df = df.copy()
     # Local closure over `df`; `def` would lose the per-call rebinding. Pre-existing
@@ -124,7 +132,7 @@ def transform_bhavcopy(df: pd.DataFrame, trade_date: date) -> pd.DataFrame:
 
     result = pd.DataFrame()
     result['symbol'] = df['SYMBOL'].astype(str).str.strip()
-    result['series'] = 'EQ'
+    result['series'] = df['SERIES'].astype(str).str.strip()
     result['open'] = num('OPEN_PRICE')
     result['high'] = num('HIGH_PRICE')
     result['low'] = num('LOW_PRICE')
@@ -135,10 +143,24 @@ def transform_bhavcopy(df: pd.DataFrame, trade_date: date) -> pd.DataFrame:
     result['value_lakh'] = num('TURNOVER_LACS')
     result['del_pct'] = num('DELIV_PER')
     result['avg_price'] = num('AVG_PRICE')
+    # Fallback: some archived NSE files omit AVG_PRICE or ship zeroes. Derive
+    # the day's average traded price from turnover / volume so downstream
+    # reports (AvgPrice*) don't blank out.
+    mask = result['avg_price'].isna() | (result['avg_price'] == 0)
+    valid_volume = result['volume'].notna() & (result['volume'] > 0)
+    derived = (result['value_lakh'] * 100_000) / result['volume']
+    result.loc[mask & valid_volume, 'avg_price'] = derived[mask & valid_volume]
     result['trade_date'] = trade_date.isoformat()
 
     # A row with no close price is unusable downstream; drop rather than store NaN.
-    return result.dropna(subset=['close'])
+    result = result.dropna(subset=['close'])
+
+    # If a symbol appears in more than one series on the same day, keep the
+    # highest-priority one. Sorting stable + drop_duplicates keeps the first.
+    result['_priority'] = result['series'].map(_SERIES_PRIORITY).fillna(99).astype(int)
+    result = result.sort_values(['symbol', '_priority', 'series'])
+    result = result.drop_duplicates(subset=['symbol', 'trade_date'], keep='first')
+    return result.drop(columns=['_priority'])
 
 
 # ── Per-date download + store ───────────────────────────────────────
@@ -208,6 +230,25 @@ def download_and_store_date(trade_date: date,
 
     # Convert to list of dicts for DB insert
     rows = df.to_dict(orient='records')
+
+    # Guard against a partially-parsed or all-null CSV making it into the DB.
+    # A real NSE BhavCopy has close prices for virtually every row; if more
+    # than half are missing, something is wrong with the download/parse.
+    null_close_ratio = df['close'].isna().mean()
+    if null_close_ratio > 0.5:
+        msg = (
+            f"Rejecting {trade_date} bhavcopy: {null_close_ratio:.1%} of "
+            f"{len(df)} rows lack a close price (likely parse failure)"
+        )
+        logger.error(msg)
+        log_sync(trade_date, 'failed', 0, msg)
+        return {
+            'date': trade_date,
+            'status': 'failed',
+            'records': 0,
+            'message': msg,
+        }
+
     inserted = insert_bhavcopy_batch(rows)
 
     # Status stays 'success' (sync_log CHECK constraint admits only a fixed set),
