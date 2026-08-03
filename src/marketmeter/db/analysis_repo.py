@@ -107,9 +107,32 @@ def get_analysis_by_recommendation(analysis_date: Optional[date] = None) -> dict
     return grouped
 
 
+def analysis_date_exists(target_date: date) -> bool:
+    """Check if analysis data exists for a specific date."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM daily_analysis WHERE analysis_date = ? LIMIT 1",
+            (target_date.isoformat(),),
+        ).fetchone()
+        return row is not None
+
+
+def get_analysis_date_range() -> tuple[Optional[date], Optional[date]]:
+    """Get the earliest and latest analysis_date in daily_analysis."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT MIN(analysis_date) as mn, MAX(analysis_date) as mx FROM daily_analysis"
+        ).fetchone()
+        mn = date.fromisoformat(row['mn']) if row['mn'] else None
+        mx = date.fromisoformat(row['mx']) if row['mx'] else None
+        return mn, mx
+
+
 __all__ = [
     "save_daily_analysis",
     "get_latest_analysis",
     "get_resolved_analysis_date",
     "get_analysis_by_recommendation",
+    "analysis_date_exists",
+    "get_analysis_date_range",
 ]
