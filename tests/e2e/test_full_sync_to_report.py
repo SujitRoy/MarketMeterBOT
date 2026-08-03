@@ -53,7 +53,29 @@ def db(monkeypatch):
     """Seed an in-memory DB and route every get_connection call to it."""
     conn = fresh_inmemory_db()
     factory = lambda: _cm_from_conn(conn)  # noqa: E731
-    monkeypatch.setattr("marketmeter.db.connection.get_connection", factory)
+
+    # Repos import get_connection locally (`from .connection import get_connection`),
+    # so patching only marketmeter.db.connection.get_connection is not enough.
+    # Patch the local binding in every repo module that uses it.
+    modules_to_patch = [
+        "marketmeter.db.connection",
+        "marketmeter.db.bhavcopy_repo",
+        "marketmeter.db.analysis_repo",
+        "marketmeter.db.cache_repo",
+        "marketmeter.db.sync_repo",
+        "marketmeter.db.subscriber_repo",
+        "marketmeter.db.stats_repo",
+        "marketmeter.db.intraday_repo",
+        "marketmeter.db.schema",
+    ]
+    for mod in modules_to_patch:
+        if mod in sys.modules:
+            monkeypatch.setattr(f"{mod}.get_connection", factory)
+        else:
+            # Import the module so the attribute exists, then patch it.
+            __import__(mod)
+            monkeypatch.setattr(f"{mod}.get_connection", factory)
+
     yield conn
     conn.close()
 
