@@ -20,6 +20,7 @@ from __future__ import annotations
 from datetime import date  # noqa: F401
 from typing import Optional
 
+from marketmeter.core.time import today_ist
 from marketmeter.core.config import (
     BOT_DISPLAY_NAME, REPORT_TOP_PICKS, REPORT_TABLE_ROWS,
 )
@@ -272,7 +273,7 @@ def generate_morning_report(analysis_date: Optional[date] = None,
     if analysis_date is None:
         analysis_date = get_resolved_analysis_date()
         if analysis_date is None:
-            return _no_data_report(date.today())
+            return _no_data_report(today_ist())
 
     if use_cache:
         cached = get_cached_report('morning', analysis_date)

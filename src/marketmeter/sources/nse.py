@@ -37,6 +37,8 @@ from marketmeter.core.time import (
     is_trading_day,
     is_weekend_or_holiday,
     get_trading_days,
+    today_ist,
+    now_ist,
 )
 from marketmeter.db import (
     insert_bhavcopy_batch,
@@ -228,11 +230,11 @@ def download_and_store_date(trade_date: date,
 
 def sync_incremental_data() -> dict:
     """
-    Sync missing trading days from last synced date to today.
+    Sync missing trading days from last synced date to today (IST).
     Also retries previously failed dates.
     Returns summary dict.
     """
-    today = date.today()
+    today = today_ist()
     last_synced = get_last_synced_date()
 
     # Determine start date for sync
@@ -261,7 +263,7 @@ def sync_incremental_data() -> dict:
     # Today's file does not exist until after the 15:30 close. Requesting it
     # earlier guarantees a 404 that gets logged as not_available, which is
     # exactly how 2026-07-29 was lost: synced at 09:21, never retried.
-    if new_dates and new_dates[-1] == today and datetime.now().hour < MARKET_CLOSE_HOUR:
+    if new_dates and new_dates[-1] == today and now_ist().hour < MARKET_CLOSE_HOUR:
         new_dates = new_dates[:-1]
         logger.info(
             "Skipping %s: before %02d:00 IST, NSE has not published yet",
@@ -358,7 +360,7 @@ def backfill_historical_data(start_date: Optional[date] = None,
     if start_date is None:
         start_date = date.fromisoformat(HISTORICAL_START_DATE)
     if end_date is None:
-        end_date = date.today()
+        end_date = today_ist()
 
     trading_days = get_trading_days(start_date, end_date)
     logger.info("Backfilling %d trading days from %s to %s",
