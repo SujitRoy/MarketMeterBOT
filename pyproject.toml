@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "marketmeter"
+version = "0.1.0-beta"
+description = "NSE Stock Analysis Telegram Bot"
+requires-python = ">=3.11"
+# Runtime deps are listed in requirements.txt at the project root for pip freeze
+# parity. We do not duplicate them here so the two files never drift.
+dependencies = []
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["marketmeter*"]
+# Empty migration submodules should still be packaged.
+namespaces = false
