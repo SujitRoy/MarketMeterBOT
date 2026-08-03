@@ -300,6 +300,9 @@ def _build_detail_body(
     # ── Price Summary ─────────────────────────────────────────
     lines.append("**💰 Price Summary**")
     lines.append("")
+    # 2-column table. Rel Vol previously appended a third cell (the signal),
+    # giving the row 3 cells in a 2-col table — Telegram's table parser
+    # rejected the card, which is why /search showed a broken table.
     lines.append("| Metric | Value |")
     lines.append("|:-------|------:|")
     lines.append(f"| **LTP** | {ltp_str} |")
@@ -309,7 +312,7 @@ def _build_detail_body(
     lines.append(f"| **Low** | {_fmt_price(low)} |")
     lines.append(f"| **VWAP** | {_fmt_price(vwap)} |")
     lines.append(f"| **Volume** | {_fmt_int(vol)} |")
-    lines.append(f"| **Rel Vol (10d)** | {_fmt_num(rel_vol, ',.2f')}x | {_rvol_signal(rel_vol)} |")
+    lines.append(f"| **Rel Vol (10d)** | {_fmt_num(rel_vol, ',.2f')}x · {_rvol_signal(rel_vol)} |")
     lines.append("")
 
     # ── Intraday Analytics ────────────────────────────────────
@@ -495,7 +498,7 @@ async def send_live_stock_detail(update: Update, symbol: str):
         await update.message.reply_text(f"❌ No live data for **{symbol}**.")
         return
 
-    message = "\n".join(format_live_detail(symbol, data))
+    message = format_live_detail(symbol, data)
     await _send_rich_chunks(
         update.get_bot(), update.effective_chat.id, message,
         reply_markup=_chart_keyboard(symbol),
