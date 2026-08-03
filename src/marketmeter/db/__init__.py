@@ -45,6 +45,8 @@ from .analysis_repo import (
     get_latest_analysis,
     get_resolved_analysis_date,
     get_analysis_by_recommendation,
+    analysis_date_exists,
+    get_analysis_date_range,
 )
 from .sync_repo import (
     log_sync,
@@ -95,6 +97,7 @@ __all__ = [
     # analysis
     "save_daily_analysis", "get_latest_analysis",
     "get_resolved_analysis_date", "get_analysis_by_recommendation",
+    "analysis_date_exists", "get_analysis_date_range",
     # sync
     "log_sync", "get_last_synced_date",
     "get_sync_status", "get_failed_syncs", "get_holiday_dates",
