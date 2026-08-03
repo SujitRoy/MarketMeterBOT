@@ -47,9 +47,19 @@ def run_batch_analysis(analysis_date: Optional[date] = None) -> dict:
     logger.info("Found %d symbols to analyze", len(symbols))
 
     results = []
+    stale_count = 0
     for i, symbol in enumerate(symbols, 1):
         try:
             history = get_stock_history(symbol, min_days=MIN_DATA_POINTS)
+            if not history:
+                continue
+            # A symbol may have 50+ historical rows but not have traded on the
+            # target date (delisted, suspended, renamed). Do not write a stale
+            # analysis row keyed to analysis_date; that produces top picks
+            # with no actual bhavcopy data and blank AvgPrice in the report.
+            if history[-1].get('trade_date') != analysis_date.isoformat():
+                stale_count += 1
+                continue
             result = analyze_stock(history, symbol)
             if result is not None:
                 result['analysis_date'] = analysis_date
@@ -60,6 +70,9 @@ def run_batch_analysis(analysis_date: Optional[date] = None) -> dict:
 
         if i % ANALYSIS_BATCH_SIZE == 0:
             logger.info("Processed %d/%d symbols", i, len(symbols))
+
+    if stale_count:
+        logger.info("Skipped %d symbols with no data for %s", stale_count, analysis_date)
 
     # Save to DB
     saved = save_daily_analysis(results)
