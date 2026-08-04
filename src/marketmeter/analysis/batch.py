@@ -88,6 +88,7 @@ def run_batch_analysis(analysis_date: Optional[date] = None) -> dict:
         "status": "completed",
         "message": f"Analyzed {len(results)} stocks, saved {saved}",
         "analyzed": len(results),
+        "saved": saved,
         "recommendations": recommendations,
     }
 

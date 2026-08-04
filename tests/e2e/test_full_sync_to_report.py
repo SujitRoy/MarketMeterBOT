@@ -30,29 +30,43 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 import pytest
 
 # Single authoritative schema fixture lives in the top-level conftest.py.
-from conftest import SCHEMA_SQL, fresh_inmemory_db  # noqa: E402
+from conftest import SCHEMA_SQL  # noqa: E402
 
 
 # ─── Isolated DB seam ───────────────────────────────────────────────────────
 
-@contextmanager
-def _cm_from_conn(conn: sqlite3.Connection):
-    """Yield a pre-seeded connection like marketmeter's get_connection does."""
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        pass  # lifetime owned by the fixture
-
-
 @pytest.fixture
-def db(monkeypatch):
-    """Seed an in-memory DB and route every get_connection call to it."""
-    conn = fresh_inmemory_db()
-    factory = lambda: _cm_from_conn(conn)  # noqa: E731
+def db(monkeypatch, tmp_path):
+    """Seed a file-backed temp DB and route every get_connection call to it.
+
+    A real production run calls sync/network work inside thread executors
+    (_run_sync_cycle uses loop.run_in_executor). Re-using a single
+    :memory: connection across threads makes SQLite raise
+    "SQLite objects created in a thread can only be used in that same thread".
+    A temp file with one fresh connection per get_connection() call is
+    thread-safe and still isolated from data/marketmeter.db.
+    """
+    db_file = tmp_path / "test_marketmeter.db"
+    conn = sqlite3.connect(str(db_file))
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA_SQL)
+    conn.commit()
+    conn.close()
+
+    @contextmanager
+    def _cm_from_file():
+        conn = sqlite3.connect(str(db_file))
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    factory = _cm_from_file
 
     # Repos import get_connection locally (`from .connection import get_connection`),
     # so patching only marketmeter.db.connection.get_connection is not enough.
@@ -76,15 +90,14 @@ def db(monkeypatch):
             __import__(mod)
             monkeypatch.setattr(f"{mod}.get_connection", factory)
 
-    yield conn
-    conn.close()
+    yield db_file
 
 
 # ─── Seeds ─────────────────────────────────────────────────────────────────
 
 
-def _seed_day(conn, sym, day: date, close: float, rec: str):
-    """Insert one analysis row for (sym, day)."""
+def _seed_day(db_path: Path, sym, day: date, close: float, rec: str):
+    """Insert one analysis row for (sym, day) into the temp DB file."""
     row = dict(
         symbol=sym, analysis_date=day.isoformat(),
         close=close, volume=500_000,
@@ -101,8 +114,12 @@ def _seed_day(conn, sym, day: date, close: float, rec: str):
     )
     cols = ", ".join(row)
     ph = ", ".join("?" for _ in row)
-    conn.execute(f"INSERT INTO daily_analysis ({cols}) VALUES ({ph})", tuple(row.values()))
-    conn.commit()
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(f"INSERT INTO daily_analysis ({cols}) VALUES ({ph})", tuple(row.values()))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ─── Phase-9: the four-stage pipeline, all against the seeded in-memory DB ──
@@ -175,7 +192,7 @@ class TestPhase9EndToEnd:
 
         with patch("marketmeter.sources.nse.sync_incremental_data",
                    return_value=fake_result), \
-             patch("marketmeter.analysis.batch.run_batch_analysis",
+             patch("marketmeter.analysis.run_batch_analysis",
                    side_effect=fake_run_batch_analysis), \
              patch("marketmeter.telegram.delivery.send_to_owner", new=AsyncMock()):
             ctx = MagicMock()

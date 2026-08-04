@@ -23,7 +23,7 @@ def log_sync(trade_date: date, status: str, records: int = 0, error: str = None)
     with get_connection() as conn:
         conn.execute("""
             INSERT OR REPLACE INTO sync_log (trade_date, status, records_count, error_message, synced_at)
-            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, datetime('now', 'localtime'))
         """, (trade_date.isoformat(), status, records, error))
 
 
