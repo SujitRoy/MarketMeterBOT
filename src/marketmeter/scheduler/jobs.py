@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from marketmeter.core.logging import get_logger
-from marketmeter.scheduler.timeparse import IST
+from marketmeter.core.time import IST
 from marketmeter.scheduler.sync_cycle import (
     _run_sync_cycle,
     _schedule_sync_retry,
@@ -83,7 +83,7 @@ async def _premarket_report_job(context):
     try:
         from marketmeter.reports import send_premarket_report
         from marketmeter.telegram import send_to_owner
-        result = await send_premarket_report(context.application)
+        result = await send_premarket_report(context.application, mode="live")
         logger.info("Premarket report job completed: %s", result)
         # If nothing actually reached the owner, say so explicitly — silence here
         # is how the 09:00 run went missing unnoticed.
@@ -116,8 +116,8 @@ async def _open_crosscheck_job(context):
                 datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S IST'))
     logger.info("=" * 60)
     try:
-        from marketmeter.reports import send_open_crosscheck_report
-        result = await send_open_crosscheck_report(context.application)
+        from marketmeter.reports import send_premarket_report
+        result = await send_premarket_report(context.application, mode="open")
         logger.info("Market-open cross-check job completed: %s", result)
         if result.get('sent', 0) == 0:
             from marketmeter.telegram import send_to_owner

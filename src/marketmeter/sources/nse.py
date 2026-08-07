@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import datetime as dt
 import time
-from datetime import date, datetime
+from datetime import date
 from io import StringIO
 from typing import Optional
 
@@ -165,47 +165,6 @@ def transform_bhavcopy(df: pd.DataFrame, trade_date: date) -> pd.DataFrame:
 
 # ── Per-date download + store ───────────────────────────────────────
 
-def download_bhavcopy_for_date(trade_date: date,
-                               session: Optional[requests.Session] = None,
-                               nse_client=None) -> tuple[bool, Optional[pd.DataFrame], str]:
-    """
-    Download bhavcopy for a single date.
-
-    nse_client is accepted and ignored for backward compatibility with callers
-    that still pass a reusable client.
-    Returns: (success, DataFrame or None, message)
-    """
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            raw = fetch_bhavcopy_csv(trade_date, session=session)
-
-            if raw.empty:
-                return (False, None,
-                        "No EQ rows in NSE file (not yet published or genuine holiday)")
-
-            df = transform_bhavcopy(raw, trade_date)
-            if df.empty:
-                return (False, None, "All rows dropped: no usable close prices")
-            return (True, df, f"Downloaded {len(df)} records")
-
-        except BhavcopyNotPublished as e:
-            # Deterministic: retrying inside this call cannot help. Report it so
-            # classify_sync_status marks the date retryable at a later time.
-            return (False, None, str(e))
-
-        except Exception as e:
-            error_msg = f"{type(e).__name__}: {e}"
-            logger.warning("Attempt %d/%d for %s failed: %s",
-                           attempt, MAX_RETRIES, trade_date, error_msg)
-
-            if attempt < MAX_RETRIES:
-                time.sleep(RETRY_BACKOFF ** attempt)  # OK: runs in executor thread
-            else:
-                return (False, None, error_msg)
-
-    return (False, None, "Unknown error")
-
-
 def download_and_store_date(trade_date: date,
                             session: Optional[requests.Session] = None,
                             nse_client=None) -> dict:
@@ -215,56 +174,76 @@ def download_and_store_date(trade_date: date,
     nse_client is accepted and ignored for backward compatibility.
     Returns status dict for logging.
     """
-    success, df, message = download_bhavcopy_for_date(trade_date, session=session)
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            raw = fetch_bhavcopy_csv(trade_date, session=session)
 
-    if not success:
-        # 🔧 FIX: Use proper classification based on date + message
-        status = classify_sync_status(trade_date, message)
-        log_sync(trade_date, status, 0, message)
-        return {
-            'date': trade_date,
-            'status': status,
-            'records': 0,
-            'message': message,
-        }
+            if raw.empty:
+                msg = "No EQ rows in NSE file (not yet published or genuine holiday)"
+                status = classify_sync_status(trade_date, msg)
+                log_sync(trade_date, status, 0, msg)
+                return {'date': trade_date, 'status': status, 'records': 0, 'message': msg}
 
-    # Convert to list of dicts for DB insert
-    rows = df.to_dict(orient='records')
+            df = transform_bhavcopy(raw, trade_date)
+            if df.empty:
+                msg = "All rows dropped: no usable close prices"
+                status = classify_sync_status(trade_date, msg)
+                log_sync(trade_date, status, 0, msg)
+                return {'date': trade_date, 'status': status, 'records': 0, 'message': msg}
 
-    # Guard against a partially-parsed or all-null CSV making it into the DB.
-    # A real NSE BhavCopy has close prices for virtually every row; if more
-    # than half are missing, something is wrong with the download/parse.
-    null_close_ratio = df['close'].isna().mean()
-    if null_close_ratio > 0.5:
-        msg = (
-            f"Rejecting {trade_date} bhavcopy: {null_close_ratio:.1%} of "
-            f"{len(df)} rows lack a close price (likely parse failure)"
-        )
-        logger.error(msg)
-        log_sync(trade_date, 'failed', 0, msg)
-        return {
-            'date': trade_date,
-            'status': 'failed',
-            'records': 0,
-            'message': msg,
-        }
+            # Convert to list of dicts for DB insert
+            rows = df.to_dict(orient='records')
 
-    inserted = insert_bhavcopy_batch(rows)
+            # Guard against a partially-parsed or all-null CSV making it into the DB.
+            null_close_ratio = df['close'].isna().mean()
+            if null_close_ratio > 0.5:
+                msg = (
+                    f"Rejecting {trade_date} bhavcopy: {null_close_ratio:.1%} of "
+                    f"{len(df)} rows lack a close price (likely parse failure)"
+                )
+                logger.error(msg)
+                log_sync(trade_date, 'failed', 0, msg)
+                return {
+                    'date': trade_date,
+                    'status': 'failed',
+                    'records': 0,
+                    'message': msg,
+                }
 
-    # Status stays 'success' (sync_log CHECK constraint admits only a fixed set),
-    # which is accurate: the date downloaded and reconciled. The honest signal
-    # lives in records_count + net_new, so a duplicate/partial re-run is never
-    # mistaken for a fresh batch of rows.
-    log_sync(trade_date, 'success', inserted)
-    logger.info("Reconciled %s: %d net-new rows", trade_date, inserted)
+            inserted = insert_bhavcopy_batch(rows)
+            log_sync(trade_date, 'success', inserted)
+            logger.info("Reconciled %s: %d net-new rows", trade_date, inserted)
+            return {
+                'date': trade_date,
+                'status': 'success',
+                'records': inserted,
+                'net_new': inserted > 0,
+                'message': f"Downloaded {len(df)} records",
+            }
 
-    return {
-        'date': trade_date,
-        'status': 'success',
-        'records': inserted,
-        'net_new': inserted > 0,
-        'message': message,
-    }
+        except BhavcopyNotPublished as e:
+            # Deterministic: retrying inside this call cannot help. Report it so
+            # classify_sync_status marks the date retryable at a later time.
+            msg = str(e)
+            status = classify_sync_status(trade_date, msg)
+            log_sync(trade_date, status, 0, msg)
+            return {'date': trade_date, 'status': status, 'records': 0, 'message': msg}
+
+        except Exception as e:
+            error_msg = f"{type(e).__name__}: {e}"
+            logger.warning("Attempt %d/%d for %s failed: %s",
+                           attempt, MAX_RETRIES, trade_date, error_msg)
+
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_BACKOFF ** attempt)  # OK: runs in executor thread
+            else:
+                status = classify_sync_status(trade_date, error_msg)
+                log_sync(trade_date, status, 0, error_msg)
+                return {'date': trade_date, 'status': status, 'records': 0, 'message': error_msg}
+
+    status = classify_sync_status(trade_date, "Unknown error")
+    log_sync(trade_date, status, 0, "Unknown error")
+    return {'date': trade_date, 'status': status, 'records': 0, 'message': "Unknown error"}
 
 
 # ── Incremental Sync ────────────────────────────────────────────────
@@ -449,7 +428,6 @@ __all__ = [
     "classify_sync_status",
     "fetch_bhavcopy_csv",
     "transform_bhavcopy",
-    "download_bhavcopy_for_date",
     "download_and_store_date",
     "sync_incremental_data",
     "backfill_historical_data",

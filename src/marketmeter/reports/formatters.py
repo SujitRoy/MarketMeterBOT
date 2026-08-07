@@ -139,18 +139,6 @@ def vol_ratio(live_vol: Optional[int], avg_vol: Optional[float]) -> Optional[flo
     return live_vol / avg_vol
 
 
-# ── Backward-compat underscore aliases (Phase 4 callers reference both names)
-#
-# Several call sites and the Phase 4 shims reference the original underscore
-# names. Expose them so neither the shims nor the search_handler migration
-# need translation passes.
-_fmt = fmt
-_gap_pct = gap_pct
-_vol_ratio = vol_ratio
-_signed_pct = signed_pct
-_gap = gap_pct           # the original `_gap` returned the float, same as gap_pct
-
-
 __all__ = [
     "NA_DASH",
     "NA_EMDASH",
@@ -163,10 +151,4 @@ __all__ = [
     "fmt_mcap",
     "gap_pct",
     "vol_ratio",
-    # legacy underscore aliases
-    "_fmt",
-    "_gap_pct",
-    "_vol_ratio",
-    "_signed_pct",
-    "_gap",
 ]

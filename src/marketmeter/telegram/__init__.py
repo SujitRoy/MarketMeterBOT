@@ -13,13 +13,11 @@ became focused modules under src/marketmeter/telegram/:
     │   ├── split.py        # _split_rich_markdown
     │   └── send.py         # _send_rich_message, _send_rich_chunks, _send_report_in_chunks, _reply
     ├── search/
-    │   ├── lookup.py       # tv_symbol_lookup
     │   ├── keyboards.py    # build_search_keyboard, _build_candidate_keyboard, _chart_keyboard
-    │   └── detail.py       # fetch_live_for_symbol, format_live_detail, send_live_stock_detail
     └── handlers/
         ├── core.py         # /start /help /status /indicators /subscribe /unsubscribe
         ├── report.py       # /report
-        └── search.py       # /search + on_search_select
+        └── search.py       # /search + on_search_select (inlined tv_symbol_lookup, detail functions)
 
 The /bot.py and /search_handler.py shims at the project root re-export the
 full public surface so existing call sites keep working through Phase 6.
@@ -37,13 +35,9 @@ from .rich.send import (
     _send_rich_message, _send_rich_chunks, _send_report_in_chunks, _reply,
 )
 
-# Re-export search utilities
-from .search.lookup import tv_symbol_lookup
+# Re-export search utilities (keyboards only; lookup/detail inlined in handlers/search)
 from .search.keyboards import (
     build_search_keyboard, _build_candidate_keyboard, _chart_keyboard,
-)
-from .search.detail import (
-    fetch_live_for_symbol, format_live_detail, send_live_stock_detail,
 )
 
 # Re-export handlers (for registration in app.py and test patching)
@@ -62,9 +56,7 @@ __all__ = [
     "_needs_rich", "_split_rich_markdown",
     "_send_rich_message", "_send_rich_chunks", "_send_report_in_chunks", "_reply",
     # search
-    "tv_symbol_lookup",
     "build_search_keyboard", "_build_candidate_keyboard", "_chart_keyboard",
-    "fetch_live_for_symbol", "format_live_detail", "send_live_stock_detail",
     # handlers
     "core_handlers", "report_handlers", "search_handlers",
 ]

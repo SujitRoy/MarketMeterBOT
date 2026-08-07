@@ -11,7 +11,7 @@ venv/
 # Data & logs (generated at runtime)
 data/*.db
 data/*.lock
-logs/*.log
+logs/
 
 # IDE
 .vscode/

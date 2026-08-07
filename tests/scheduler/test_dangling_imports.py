@@ -86,9 +86,11 @@ def _seed_analysis(rec="STRONG_BUY"):
     return [{"symbol": "X", "composite_score": 1, "close": 100.0, "recommendation": rec}]
 
 
-class TestPremarketLiveSendNoDanglingImport:
-    def test_send_premarket_report_reaches_transport(self):
-        import marketmeter.reports.premarket_live as pm
+class TestPremarketUnifiedSendNoDanglingImport:
+    """Test the unified send_premarket_report with all three modes."""
+
+    def test_send_premarket_live_reaches_transport(self):
+        import marketmeter.reports.premarket as pm
         pm.get_resolved_analysis_date = lambda: dt.date(2026, 7, 31)
         pm.get_latest_analysis = lambda d: _seed_analysis()
         pm.fetch_live_snapshot = lambda syms: [{
@@ -96,43 +98,39 @@ class TestPremarketLiveSendNoDanglingImport:
             "change": 1.0, "VWAP": 100.5, "volume": 10, "RSI": 55.0,
         }]
         app = _App()
-        result = _run(pm.send_premarket_report(app))
+        result = _run(pm.send_premarket_report(app, mode="live"))
         # Must reach the actual send path (not bail with failed=1 from ImportError)
         assert result["sent"] == 1 and result["failed"] == 0
 
-
-class TestPremarketOpenSendNoDanglingImport:
-    def test_send_open_crosscheck_reaches_transport(self):
-        import marketmeter.reports.premarket_open as po
-        po.get_resolved_analysis_date = lambda: dt.date(2026, 7, 31)
-        po.get_latest_analysis = lambda d: _seed_analysis()
-        po.fetch_live_snapshot = lambda syms: [{
+    def test_send_premarket_open_reaches_transport(self):
+        import marketmeter.reports.premarket as pm
+        pm.get_resolved_analysis_date = lambda: dt.date(2026, 7, 31)
+        pm.get_latest_analysis = lambda d: _seed_analysis()
+        pm.fetch_live_snapshot = lambda syms: [{
             "symbol": "X", "close": 101.0, "RSI": 55.0, "volume": 99,
         }]
         app = _App()
-        result = _run(po.send_open_crosscheck_report(app))
+        result = _run(pm.send_premarket_report(app, mode="open"))
         assert result["sent"] == 1 and result["failed"] == 0
 
-
-class TestPremarketCombinedSendNoDanglingImport:
-    def test_send_combined_reaches_transport(self):
-        import marketmeter.reports.premarket_combined as pc
-        pc.get_resolved_analysis_date = lambda: dt.date(2026, 7, 31)
-        pc.get_latest_analysis = lambda d: _seed_analysis()
-        pc.fetch_live_snapshot = lambda syms: [{"symbol": "X", "close": 101.0, "RSI": 55.0}]
+    def test_send_premarket_combined_reaches_transport(self):
+        import marketmeter.reports.premarket as pm
+        pm.get_resolved_analysis_date = lambda: dt.date(2026, 7, 31)
+        pm.get_latest_analysis = lambda d: _seed_analysis()
+        pm.fetch_live_snapshot = lambda syms: [{"symbol": "X", "close": 101.0, "RSI": 55.0}]
         app = _App()
-        result = _run(pc.send_combined_premarket_report(app))
+        result = _run(pm.send_premarket_report(app, mode="combined"))
         assert result["sent"] == 1 and result["failed"] == 0
 
     def test_combined_with_none_recommendation_does_not_crash(self):
         """B6: merge_historical_live sets hist_rec=h.get('recommendation'),
         which may be None. `.get(key, default)` returns None in that case, so
         `(m.get('hist_rec') or NA_EMDASH).replace(...)` is the only safe form."""
-        import marketmeter.reports.premarket_combined as pc
-        pc.get_resolved_analysis_date = lambda: dt.date(2026, 7, 31)
-        pc.get_latest_analysis = lambda d: _seed_analysis(rec=None)  # None rec
-        pc.fetch_live_snapshot = lambda syms: [{"symbol": "X", "close": 101.0}]
+        import marketmeter.reports.premarket as pm
+        pm.get_resolved_analysis_date = lambda: dt.date(2026, 7, 31)
+        pm.get_latest_analysis = lambda d: _seed_analysis(rec=None)  # None rec
+        pm.fetch_live_snapshot = lambda syms: [{"symbol": "X", "close": 101.0}]
         app = _App()
-        result = _run(pc.send_combined_premarket_report(app))
+        result = _run(pm.send_premarket_report(app, mode="combined"))
         # Would have raised AttributeError: 'NoneType' has no attribute 'replace'
         assert result["sent"] == 1

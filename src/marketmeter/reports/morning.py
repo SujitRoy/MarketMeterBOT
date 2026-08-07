@@ -37,12 +37,72 @@ from marketmeter.analysis import get_analysis_aggregate as _aggregate
 from marketmeter.reports.formatters import (
     fmt, price_rupees, price_rupees_compact,
 )
-from marketmeter.reports.labels import (
-    obv_label, macd_label, bb_pos, narrative,
-)
-from marketmeter.reports.cache import _NO_DATA_MARKER, _no_data_report
+from marketmeter.reports.cache import _no_data_report
 
 logger = get_logger(__name__)
+
+
+# ── Inlined label helpers (from deleted labels.py) ──────────────────
+
+def obv_label(obv_trend: float, volume: int) -> str:
+    """One-word OBV trend: Surging / Rising / Steady / Falling / Weak / Flat."""
+    if volume is None or volume <= 0:
+        return "↔ Flat"
+    if obv_trend is None:
+        return "↔ Flat"
+    pct = abs(obv_trend) / volume
+    if obv_trend > 0:
+        return "↑ Surging" if pct > 0.5 else ("↑ Rising" if pct > 0.1 else "↑ Steady")
+    if obv_trend < 0:
+        return "↓ Falling" if pct > 0.1 else "↓ Weak"
+    return "↔ Flat"
+
+
+def macd_label(macd_line, signal_line, hist=None) -> str:
+    """Bullish / Bearish based on macd_line vs signal_line."""
+    if macd_line is None or signal_line is None:
+        return "-"
+    return "Bullish" if macd_line > signal_line else "Bearish"
+
+
+def bb_pos(close, bb_upper, bb_lower) -> str:
+    """Where price sits within the Bollinger Band range."""
+    if close is None or bb_upper is None or bb_lower is None or bb_upper == bb_lower:
+        return "-"
+    pct = (close - bb_lower) / (bb_upper - bb_lower)
+    if pct >= 0.9:
+        return "Near Upper"
+    if pct >= 0.5:
+        return "Mid-Upper"
+    if pct >= 0.1:
+        return "Mid-Lower"
+    return "Near Lower"
+
+
+def narrative(s: dict) -> str:
+    """One-line narrative from actual indicator values."""
+    parts = []
+    rsi = s.get('rsi_14')
+    adx = s.get('adx_14')
+    rv  = s.get('rel_volume')
+    macd_b = (s.get('macd_line') or 0) > (s.get('signal_line') or 0)
+    sma20  = s.get('sma_20')
+    close  = s.get('close')
+
+    if rsi is not None:
+        if rsi > 70:   parts.append("overbought RSI")
+        elif rsi > 60: parts.append("bullish RSI")
+        elif rsi < 40: parts.append("weak RSI")
+    if adx is not None:
+        if adx > 50:   parts.append("very strong trend")
+        elif adx > 30: parts.append("strong trend")
+        elif adx < 20: parts.append("weak trend")
+    if rv is not None:
+        if rv > 3:     parts.append(f"{rv:.1f}x volume surge")
+        elif rv > 1.5: parts.append(f"{rv:.1f}x above avg volume")
+    if macd_b:         parts.append("MACD bullish")
+    if sma20 and close is not None and close > sma20: parts.append("above SMA20")
+    return "; ".join(parts[:4]) if parts else "Insufficient signal"
 
 
 CATEGORY_CONFIG = {
@@ -285,7 +345,7 @@ def generate_morning_report(analysis_date: Optional[date] = None,
 
     # Only cache real reports. Caching a "no data" notice would pin it for the
     # whole retention window.
-    if use_cache and not report.startswith(_NO_DATA_MARKER):
+    if use_cache and "No analysis data available" not in report:
         put_cached_report('morning', analysis_date, report)
         logger.info("Report cached for %s (%d chars)", analysis_date, len(report))
 

@@ -6,10 +6,6 @@ Phase 7 §3 mandate: "job callbacks (mocked sources, no DB/network)."
 These tests exercise the daily/premarket/cross-check job callbacks.
 Each test mocks the underlying network/DB call so the tests run in
 milliseconds.
-
-The `_daily_sync_job` function was renamed away in the refactor; the
-tests verify the still-living `_premarket_report_job` and
-`_open_crosscheck_job` callbacks and the retry-loop semantics.
 """
 from __future__ import annotations
 
@@ -38,10 +34,10 @@ def _run(coro):
 
 
 class TestPremarketReportJob:
-    """The 09:00 premarket job must call send_premarket_report and notify
+    """The 09:00 premarket job must call send_premarket_report(mode="live") and notify
     the owner if nothing was sent (so a silent miss is never lost)."""
 
-    def test_calls_send_premarket_report(self):
+    def test_calls_send_premarket_report_live(self):
         ctx = MagicMock()
         ctx.application = MagicMock()
         fake_result = {"sent": 1, "failed": 0}
@@ -50,7 +46,7 @@ class TestPremarketReportJob:
         with patch("marketmeter.reports.send_premarket_report",
                    new=AsyncMock(return_value=fake_result), create=True) as mock_send:
             _run(jobs._premarket_report_job(ctx))
-        mock_send.assert_awaited_once_with(ctx.application)
+        mock_send.assert_awaited_once_with(ctx.application, mode="live")
 
     def test_zero_sent_triggers_owner_warning(self):
         # When send_premarket_report reports 0 sent, the owner must get
@@ -78,22 +74,22 @@ class TestPremarketReportJob:
 
 
 class TestOpenCrosscheckJob:
-    """The 09:15 cross-check job must call send_open_crosscheck_report."""
+    """The 09:15 cross-check job must call send_premarket_report(mode="open")."""
 
-    def test_calls_send_open_crosscheck_report(self):
+    def test_calls_send_premarket_report_open(self):
         ctx = MagicMock()
         ctx.application = MagicMock()
         fake_result = {"sent": 1}
-        with patch("marketmeter.reports.send_open_crosscheck_report",
+        with patch("marketmeter.reports.send_premarket_report",
                    new=AsyncMock(return_value=fake_result), create=True) as mock_send:
             _run(jobs._open_crosscheck_job(ctx))
-        mock_send.assert_awaited_once_with(ctx.application)
+        mock_send.assert_awaited_once_with(ctx.application, mode="open")
 
     def test_zero_sent_triggers_owner_warning(self):
         ctx = MagicMock()
         ctx.application = MagicMock()
         fake_result = {"sent": 0}
-        with patch("marketmeter.reports.send_open_crosscheck_report",
+        with patch("marketmeter.reports.send_premarket_report",
                    new=AsyncMock(return_value=fake_result), create=True), \
              patch("marketmeter.telegram.send_to_owner",
                    new=AsyncMock(), create=True) as mock_owner:
@@ -103,7 +99,7 @@ class TestOpenCrosscheckJob:
     def test_exception_triggers_failure_alert(self):
         ctx = MagicMock()
         ctx.application = MagicMock()
-        with patch("marketmeter.reports.send_open_crosscheck_report",
+        with patch("marketmeter.reports.send_premarket_report",
                    new=AsyncMock(side_effect=RuntimeError("network")), create=True), \
              patch("marketmeter.telegram.send_to_owner",
                    new=AsyncMock(), create=True) as mock_owner:
@@ -149,6 +145,6 @@ class TestJobLogging:
     def test_crosscheck_job_logs_start(self):
         ctx = MagicMock()
         ctx.application = MagicMock()
-        with patch("marketmeter.scheduler.jobs.send_open_crosscheck_report",
+        with patch("marketmeter.scheduler.jobs.send_premarket_report",
                    new=AsyncMock(return_value={"sent": 1}), create=True):
             _run(jobs._open_crosscheck_job(ctx))

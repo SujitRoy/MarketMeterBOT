@@ -39,7 +39,9 @@ class TestIstTimezone:
     """IST = UTC+5:30, no DST. Pin the offset value."""
 
     def test_ist_offset_is_5_30(self):
-        assert IST.utcoffset(None) == timedelta(hours=5, minutes=30)
+        # ZoneInfo.utcoffset(None) returns None; pass a datetime
+        dt = datetime(2026, 1, 1, tzinfo=IST)
+        assert dt.utcoffset() == timedelta(hours=5, minutes=30)
 
     def test_ist_is_fixed_offset(self):
         # No DST in India
@@ -149,7 +151,9 @@ class TestParseIstTime:
     def test_has_correct_timezone(self):
         t = parse_ist_time("15:45")
         assert t.tzinfo == IST
-        assert t.utcoffset() == timedelta(hours=5, minutes=30)
+        # time.utcoffset() returns None without a datetime; check via datetime
+        dt = datetime.combine(date.today(), t)
+        assert dt.utcoffset() == timedelta(hours=5, minutes=30)
 
     def test_midnight(self):
         t = parse_ist_time("00:00")

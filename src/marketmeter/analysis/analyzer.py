@@ -27,9 +27,42 @@ from marketmeter.analysis.indicators import (
     calc_sma, calc_ema, calc_rsi, calc_macd, calc_atr, calc_adx,
     calc_bollinger_bands, calc_obv,
 )
-from marketmeter.analysis.scoring import _get_recommendation
 
 logger = get_logger(__name__)
+
+
+# ── Inlined scoring (from deleted scoring.py) ───────────────────────
+
+def _get_recommendation(score: int, rsi: float, adx: float):
+    """Map composite score to recommendation label."""
+    if score >= 12:
+        rec = "STRONG_BUY"
+    elif score >= 10:
+        rec = "BUY"
+    elif score >= 8:
+        rec = "ACCUMULATE"
+    elif score >= 6:
+        rec = "WATCH"
+    elif score >= 4:
+        rec = "CAUTION"
+    else:
+        rec = "AVOID"
+
+    # Down-grade if RSI is extreme and trend is weak
+    if rsi is not None and adx is not None:
+        if rsi > 80 and adx < 20 and rec in ("STRONG_BUY", "BUY"):
+            rec = "ACCUMULATE"
+
+    rationale = {
+        "STRONG_BUY": "high composite signal",
+        "BUY":        "strong momentum",
+        "ACCUMULATE": "add on dips",
+        "WATCH":      "monitor for setup",
+        "CAUTION":    "overbought/weak",
+        "AVOID":      "poor setup",
+    }.get(rec, "")
+
+    return rec, rationale
 
 
 def analyze_stock(df, symbol: str) -> Optional[dict]:

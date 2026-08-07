@@ -10,7 +10,7 @@ from marketmeter.core.config import (
     SYNC_RETRY_INTERVAL_MINUTES, SYNC_RETRY_UNTIL_HOUR,
 )
 from marketmeter.core.logging import get_logger
-from marketmeter.scheduler.timeparse import IST
+from marketmeter.core.time import IST
 
 logger = get_logger(__name__)
 

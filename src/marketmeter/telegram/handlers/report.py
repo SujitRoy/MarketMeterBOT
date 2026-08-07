@@ -48,7 +48,6 @@ def _parse_report_date(raw: str) -> date | None:
 
 def _format_date_error(raw: str) -> str:
     """Build an error message when the user passes an unparseable date."""
-    today = date.today()
     from_date, to_date = get_analysis_date_range()
     range_hint = ""
     if from_date and to_date:
